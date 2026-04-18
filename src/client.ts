@@ -44,6 +44,9 @@ export class BybitClient {
     }
 
     if (body.retCode !== 0 && !PASSTHROUGH_CODES.has(body.retCode)) {
+      if (body.retCode === 10002) {
+        throw new BybitError(10002, "Timestamp expired — system clock may have drifted. Retry the request.");
+      }
       throw new BybitError(body.retCode, body.retMsg);
     }
 

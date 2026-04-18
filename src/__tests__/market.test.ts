@@ -51,7 +51,8 @@ describe("handleGetMarketData", () => {
       .mockResolvedValueOnce(mockKline)     // kline 60
       .mockResolvedValueOnce(mockKline)     // kline 240
       .mockResolvedValueOnce(mockFunding)   // funding history
-      .mockResolvedValueOnce(mockOrderbook); // orderbook
+      .mockResolvedValueOnce(mockOrderbook) // orderbook
+      .mockResolvedValueOnce({ list: [] }); // OI history (new)
 
     const result = await handleGetMarketData(client, "BTCUSDT");
 

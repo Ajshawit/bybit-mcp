@@ -104,12 +104,20 @@ export async function handleGetMarketData(
       symbol,
       limit: "20",
     }),
+    client.publicGet<OIHistoryResult>("/v5/market/open-interest", {
+      category: "linear",
+      symbol,
+      intervalTime: "4h",
+      limit: "7",
+    }).catch(() => null), // soft-fail: OI history is optional
   ]);
 
   const tickersRes = allResults[0] as TickersResult;
   const klineResults = allResults.slice(1, 1 + klineIntervals.length) as KlineResult[];
   const fundingRes = allResults[1 + klineIntervals.length] as FundingHistoryResult;
   const obRes = allResults[2 + klineIntervals.length] as OrderbookEntry;
+  const oiRes = allResults[3 + klineIntervals.length] as OIHistoryResult | null;
+  const oiList = oiRes?.list ?? [];
 
   const t = tickersRes.list?.[0];
   const fundingList = fundingRes.list ?? [];
@@ -123,8 +131,8 @@ export async function handleGetMarketData(
     funding24hAgo: fundingList[3] ? parseFloat(fundingList[3].fundingRate) : null,
     oi: t ? parseFloat(t.openInterest) : 0,
     oiValueUsd: t ? parseFloat(t.openInterestValue) : 0,
-    oi4hAgo: null,
-    oi24hAgo: null,
+    oi4hAgo: oiList[1] ? parseFloat(oiList[1].openInterest) : null,
+    oi24hAgo: oiList[6] ? parseFloat(oiList[6].openInterest) : null,
     volume24hUsd: t ? parseFloat(t.turnover24h) : 0,
     bid: t ? parseFloat(t.bid1Price) : 0,
     ask: t ? parseFloat(t.ask1Price) : 0,

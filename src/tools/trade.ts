@@ -44,6 +44,7 @@ async function ensureInstrumentInfo(client: BybitClient, symbol: string) {
   info = {
     tickSize: inst.priceFilter.tickSize,
     qtyStep: inst.lotSizeFilter.qtyStep,
+    // TODO: Verify minNotionalValue field location against live Bybit API response before mainnet use
     minNotionalValue: inst.minNotionalValue,
   };
   instrumentsCache.set(symbol, info);
@@ -66,7 +67,10 @@ export async function handlePlaceTrade(
   ]);
 
   const price = parseFloat(tickerRes.list[0].lastPrice);
-  const usdtCoin = walletRes.list[0].coin.find((c) => c.coin === "USDT")!;
+  const usdtCoin = walletRes.list[0].coin.find((c) => c.coin === "USDT");
+  if (!usdtCoin) {
+    throw new Error("USDT coin not found in wallet balance response");
+  }
   const freeCapital = parseFloat(usdtCoin.walletBalance) - parseFloat(usdtCoin.totalPositionIM);
 
   if (marginUsdt > freeCapital) {

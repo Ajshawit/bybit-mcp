@@ -38,7 +38,10 @@ export async function handleGetAccountStatus(client: BybitClient): Promise<Accou
   ]);
 
   const account = walletRes.list[0];
-  const usdtCoin = account.coin.find((c) => c.coin === "USDT")!;
+  const usdtCoin = account.coin.find((c) => c.coin === "USDT");
+  if (!usdtCoin) {
+    throw new Error("USDT coin not found in wallet balance response");
+  }
 
   const walletBalance = parseFloat(usdtCoin.walletBalance);
   const totalPositionIM = parseFloat(usdtCoin.totalPositionIM);
