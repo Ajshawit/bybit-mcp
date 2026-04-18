@@ -34,6 +34,18 @@ export interface MarketKlineBar {
   turnover: number;
 }
 
+export interface OIDivergenceResult {
+  symbol: string;
+  price: number;
+  price24hPct: number;
+  price4hPct: number;
+  oi24hPct: number;
+  oi4hPct: number;
+  oiValueUsd: number;
+  volume24hUsd: number;
+  reading: "short_covering" | "new_shorts";
+}
+
 export interface MarketDataResult {
   ticker: MarketTicker;
   klines: Record<string, MarketKlineBar[]>;
@@ -140,9 +152,80 @@ export async function handleScanMarket(
   }
 }
 
-async function scanOiDivergence(client: BybitClient, minVolume: number, limit: number): Promise<unknown[]> {
-  void client; void minVolume; void limit;
-  return [];
+async function scanOiDivergence(
+  client: BybitClient,
+  minVolume: number,
+  limit: number
+): Promise<OIDivergenceResult[]> {
+  const tickersRes = await client.publicGet<TickersResult>("/v5/market/tickers", { category: "linear" });
+
+  const candidates = tickersRes.list.filter((t) => {
+    const vol = parseFloat(t.turnover24h);
+    const price24h = parseFloat(t.price24hPcnt) * 100;
+    return vol >= minVolume && Math.abs(price24h) > 3;
+  });
+
+  const results = await concurrentMap(candidates, 10, async (t) => {
+    try {
+      const oiRes = await client.publicGet<OIHistoryResult>("/v5/market/open-interest", {
+        category: "linear",
+        symbol: t.symbol,
+        intervalTime: "4h",
+        limit: "7",
+      });
+
+      const ois = oiRes.list;
+      if (ois.length < 7) return null;
+
+      const oiNow = parseFloat(ois[0].openInterest);
+      const oi4hAgo = parseFloat(ois[1].openInterest);
+      const oi24hAgo = parseFloat(ois[6].openInterest);
+
+      const oi4hPct = (oiNow - oi4hAgo) / oi4hAgo * 100;
+      const oi24hPct = (oiNow - oi24hAgo) / oi24hAgo * 100;
+      const price24hPct = parseFloat(t.price24hPcnt) * 100;
+
+      if (Math.abs(oi24hPct) <= 2) return null;
+
+      const priceUp = price24hPct > 0;
+      const oiDown = oi24hPct < 0;
+      const priceDown = price24hPct < 0;
+      const oiUp = oi24hPct > 0;
+
+      let reading: "short_covering" | "new_shorts" | null = null;
+      if (priceUp && oiDown) reading = "short_covering";
+      else if (priceDown && oiUp) reading = "new_shorts";
+      else return null;
+
+      const klineRes = await client.publicGet<KlineResult>("/v5/market/kline", {
+        category: "linear",
+        symbol: t.symbol,
+        interval: "240",
+        limit: "2",
+      });
+      const price4hPct = klineRes.list.length >= 2
+        ? (parseFloat(klineRes.list[0][4]) - parseFloat(klineRes.list[1][4])) / parseFloat(klineRes.list[1][4]) * 100
+        : 0;
+
+      return {
+        symbol: t.symbol,
+        price: parseFloat(t.lastPrice),
+        price24hPct,
+        price4hPct,
+        oi24hPct,
+        oi4hPct,
+        oiValueUsd: parseFloat(t.openInterestValue),
+        volume24hUsd: parseFloat(t.turnover24h),
+        reading,
+      } as OIDivergenceResult;
+    } catch {
+      return null;
+    }
+  });
+
+  return results
+    .filter((r): r is OIDivergenceResult => r !== null)
+    .slice(0, limit);
 }
 
 async function scanCrowdedPositioning(client: BybitClient, minVolume: number, limit: number): Promise<unknown[]> {

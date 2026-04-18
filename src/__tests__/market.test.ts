@@ -76,3 +76,82 @@ describe("handleGetMarketData", () => {
     expect(klineCalls[0][1].limit).toBe("24");
   });
 });
+
+describe("scan_market oi_divergence", () => {
+  function makeTickerList(overrides: Partial<{
+    symbol: string; price24hPcnt: string; turnover24h: string;
+    lastPrice: string; openInterestValue: string;
+    highPrice24h: string; lowPrice24h: string;
+  }>[]) {
+    return {
+      list: overrides.map((o) => ({
+        symbol: "XUSDT", lastPrice: "1.0", price24hPcnt: "0.05",
+        fundingRate: "0.0001", nextFundingTime: "0", openInterest: "1000000",
+        openInterestValue: "1000000", volume24h: "1000000", turnover24h: "50000000",
+        highPrice24h: "1.1", lowPrice24h: "0.9", prevPrice24h: "0.95",
+        bid1Price: "0.999", ask1Price: "1.001",
+        ...o,
+      })),
+    };
+  }
+
+  const shortCoveringOI = {
+    list: [
+      { openInterest: "950000", timestamp: "1700000000" },
+      { openInterest: "970000", timestamp: "1699985600" },
+      { openInterest: "980000", timestamp: "1699971200" },
+      { openInterest: "990000", timestamp: "1699956800" },
+      { openInterest: "995000", timestamp: "1699942400" },
+      { openInterest: "998000", timestamp: "1699928000" },
+      { openInterest: "1000000", timestamp: "1699913600" },
+    ],
+  };
+
+  it("returns short_covering when price up and OI down > 2%", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce(makeTickerList([{
+        symbol: "XUSDT", price24hPcnt: "0.05", turnover24h: "50000000",
+      }]))
+      .mockResolvedValueOnce(shortCoveringOI)
+      .mockResolvedValueOnce({ list: [["0","1.0","1.0","1.0","1.02","0","0"], ["0","1.0","1.0","1.0","1.00","0","0"]] }); // kline for 4h price
+
+    const results = await handleScanMarket(client, "oi_divergence", 10_000_000, 15) as any[];
+    expect(results).toHaveLength(1);
+    expect(results[0].reading).toBe("short_covering");
+    expect(results[0].symbol).toBe("XUSDT");
+  });
+
+  it("filters symbols below minVolume", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce(makeTickerList([{
+        symbol: "XUSDT", price24hPcnt: "0.05", turnover24h: "5000000",
+      }]));
+
+    const results = await handleScanMarket(client, "oi_divergence", 10_000_000, 15) as any[];
+    expect(results).toHaveLength(0);
+  });
+
+  it("does not surface price_up+OI_up (new longs)", async () => {
+    const newLongsOI = {
+      list: [
+        { openInterest: "1050000", timestamp: "1700000000" },
+        { openInterest: "1010000", timestamp: "1699985600" },
+        { openInterest: "990000",  timestamp: "1699971200" },
+        { openInterest: "980000",  timestamp: "1699956800" },
+        { openInterest: "970000",  timestamp: "1699942400" },
+        { openInterest: "960000",  timestamp: "1699928000" },
+        { openInterest: "950000",  timestamp: "1699913600" },
+      ],
+    };
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce(makeTickerList([{ symbol: "XUSDT", price24hPcnt: "0.05", turnover24h: "50000000" }]))
+      .mockResolvedValueOnce(newLongsOI)
+      .mockResolvedValueOnce({ list: [["0","1.0","1.0","1.0","1.02","0","0"], ["0","1.0","1.0","1.0","1.00","0","0"]] });
+
+    const results = await handleScanMarket(client, "oi_divergence", 10_000_000, 15) as any[];
+    expect(results).toHaveLength(0);
+  });
+});
