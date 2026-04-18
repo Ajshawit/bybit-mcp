@@ -206,3 +206,59 @@ describe("scan_market crowded_positioning", () => {
     expect(results).toHaveLength(0);
   });
 });
+
+describe("scan_market volume_spike", () => {
+  function buildKlineList(currentHourTurnover: number, priorTurnovers: number[], currentOpen: number, currentClose: number) {
+    // candles[0] = forming (skip), candles[1] = last completed, candles[2..] = prior
+    const forming = ["0", String(currentOpen), "0", "0", String(currentClose), "0", String(currentHourTurnover)];
+    const last = ["0", String(currentOpen), "0", "0", String(currentClose), "0", String(currentHourTurnover)];
+    const priors = priorTurnovers.map((v) => ["0", "1.0", "0", "0", "1.0", "0", String(v)]);
+    return { list: [forming, last, ...priors] };
+  }
+
+  const baseTicker = {
+    symbol: "ZUSDT", lastPrice: "1.02", price24hPcnt: "0.02",
+    fundingRate: "0", nextFundingTime: "0", openInterest: "0",
+    openInterestValue: "0", volume24h: "1000000", turnover24h: "50000000",
+    highPrice24h: "1.05", lowPrice24h: "0.98", prevPrice24h: "1.0",
+    bid1Price: "1.019", ask1Price: "1.021",
+  };
+
+  it("returns impulse_up when spikeRatio > 3 and candle moves up > 0.5%", async () => {
+    // spikeRatio = 1_000_000 / 100_000 = 10
+    const klines = buildKlineList(1_000_000, Array(24).fill(100_000), 1.0, 1.02); // 2% up
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce({ list: [baseTicker] })
+      .mockResolvedValueOnce(klines);
+
+    const results = await handleScanMarket(client, "volume_spike", 10_000_000, 15) as any[];
+    expect(results).toHaveLength(1);
+    expect(results[0].reading).toBe("impulse_up");
+    expect(results[0].spikeRatio).toBeGreaterThan(3);
+  });
+
+  it("classifies churn when volume spike but price flat", async () => {
+    // price move 0.2% — between -0.5% and 0.5% = churn
+    const klines = buildKlineList(1_000_000, Array(24).fill(100_000), 1.0, 1.002);
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce({ list: [{ ...baseTicker, lastPrice: "1.002" }] })
+      .mockResolvedValueOnce(klines);
+
+    const results = await handleScanMarket(client, "volume_spike", 10_000_000, 15) as any[];
+    expect(results[0].reading).toBe("churn");
+  });
+
+  it("does not return symbols with spikeRatio <= 3", async () => {
+    // spikeRatio = 200_000 / 100_000 = 2 — below threshold
+    const klines = buildKlineList(200_000, Array(24).fill(100_000), 1.0, 1.02);
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce({ list: [baseTicker] })
+      .mockResolvedValueOnce(klines);
+
+    const results = await handleScanMarket(client, "volume_spike", 10_000_000, 15) as any[];
+    expect(results).toHaveLength(0);
+  });
+});

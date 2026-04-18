@@ -59,6 +59,17 @@ export interface CrowdedPositioningResult {
   reading: "crowded_long" | "crowded_short";
 }
 
+export interface VolumeSpikeResult {
+  symbol: string;
+  price: number;
+  hourChangePct: number;
+  currentHourVolumeUsd: number;
+  avg24hHourlyVolumeUsd: number;
+  spikeRatio: number;
+  price24hPct: number;
+  reading: "impulse_up" | "impulse_down" | "churn";
+}
+
 export interface MarketDataResult {
   ticker: MarketTicker;
   klines: Record<string, MarketKlineBar[]>;
@@ -305,7 +316,65 @@ async function scanCrowdedPositioning(
     .slice(0, limit);
 }
 
-async function scanVolumeSpike(client: BybitClient, minVolume: number, limit: number): Promise<unknown[]> {
-  void client; void minVolume; void limit;
-  return [];
+async function scanVolumeSpike(
+  client: BybitClient,
+  minVolume: number,
+  limit: number
+): Promise<VolumeSpikeResult[]> {
+  const tickersRes = await client.publicGet<TickersResult>("/v5/market/tickers", { category: "linear" });
+
+  const universe = tickersRes.list
+    .filter((t) => parseFloat(t.turnover24h) >= minVolume)
+    .sort((a, b) => parseFloat(b.turnover24h) - parseFloat(a.turnover24h))
+    .slice(0, 100);
+
+  const results = await concurrentMap(universe, 10, async (t) => {
+    try {
+      const klineRes = await client.publicGet<KlineResult>("/v5/market/kline", {
+        category: "linear",
+        symbol: t.symbol,
+        interval: "60",
+        limit: "26",
+      });
+
+      const candles = klineRes.list;
+      if (candles.length < 26) return null;
+
+      const lastCompleted = candles[1];
+      const priorCandles = candles.slice(2, 26);
+
+      const currentHourVol = parseFloat(lastCompleted[6]);
+      const avgPriorVol = priorCandles.reduce((sum, c) => sum + parseFloat(c[6]), 0) / priorCandles.length;
+
+      if (avgPriorVol === 0) return null;
+      const spikeRatio = currentHourVol / avgPriorVol;
+      if (spikeRatio <= 3) return null;
+
+      const open = parseFloat(lastCompleted[1]);
+      const close = parseFloat(lastCompleted[4]);
+      const hourChangePct = (close - open) / open * 100;
+
+      const reading: "impulse_up" | "impulse_down" | "churn" =
+        hourChangePct > 0.5 ? "impulse_up"
+        : hourChangePct < -0.5 ? "impulse_down"
+        : "churn";
+
+      return {
+        symbol: t.symbol,
+        price: parseFloat(t.lastPrice),
+        hourChangePct,
+        currentHourVolumeUsd: currentHourVol,
+        avg24hHourlyVolumeUsd: avgPriorVol,
+        spikeRatio,
+        price24hPct: parseFloat(t.price24hPcnt) * 100,
+        reading,
+      } as VolumeSpikeResult;
+    } catch {
+      return null;
+    }
+  });
+
+  return results
+    .filter((r): r is VolumeSpikeResult => r !== null)
+    .slice(0, limit);
 }
