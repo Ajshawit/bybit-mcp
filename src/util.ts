@@ -17,6 +17,7 @@ export async function concurrentMap<T, R>(
   limit: number,
   fn: (item: T) => Promise<R>
 ): Promise<R[]> {
+  if (limit <= 0) throw new Error("concurrentMap: limit must be > 0");
   const results: R[] = new Array(items.length);
   let nextIdx = 0;
 

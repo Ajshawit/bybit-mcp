@@ -48,4 +48,8 @@ describe("concurrentMap", () => {
     });
     expect(maxConcurrent).toBeLessThanOrEqual(3);
   });
+
+  it("throws on limit <= 0", async () => {
+    await expect(concurrentMap([1], 0, async (x) => x)).rejects.toThrow("limit must be > 0");
+  });
 });
