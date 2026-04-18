@@ -142,3 +142,91 @@ export async function handlePlaceTrade(
 
   return result;
 }
+
+export interface ClosePositionParams {
+  symbol: string;
+  side: "Buy" | "Sell";
+  percent?: number;
+}
+
+export interface ClosePositionResult {
+  orderId: string;
+  orderLinkId: string;
+  closedQty: string;
+  remainingSize: number;
+}
+
+export async function handleClosePosition(
+  client: BybitClient,
+  params: ClosePositionParams
+): Promise<ClosePositionResult> {
+  const { symbol, side, percent = 100 } = params;
+  const positionIdx = side === "Buy" ? 1 : 2;
+  const inst = await ensureInstrumentInfo(client, symbol);
+
+  const posRes = await client.signedGet<{ list: Array<{ size: string; positionIdx: number; unrealisedPnl: string }>; category: string }>(
+    "/v5/position/list",
+    { category: "linear", symbol }
+  );
+
+  const pos = posRes.list.find((p) => p.positionIdx === positionIdx && parseFloat(p.size) > 0);
+  if (!pos) {
+    throw new Error(`No open ${side} position found for ${symbol}`);
+  }
+
+  const closeQty = floorToStep(parseFloat(pos.size) * percent / 100, inst.qtyStep);
+  const remaining = parseFloat(pos.size) - parseFloat(closeQty);
+  const closeSide = side === "Buy" ? "Sell" : "Buy";
+  const nonce = crypto.randomBytes(3).toString("hex");
+
+  const orderRes = await client.signedPost<OrderCreateResult>("/v5/order/create", {
+    category: "linear",
+    symbol,
+    side: closeSide,
+    orderType: "Market",
+    qty: closeQty,
+    positionIdx,
+    reduceOnly: true,
+    orderLinkId: `mcp-${Date.now()}-${nonce}`,
+  });
+
+  return {
+    orderId: orderRes.orderId,
+    orderLinkId: orderRes.orderLinkId,
+    closedQty: closeQty,
+    remainingSize: remaining,
+  };
+}
+
+export interface ManagePositionParams {
+  symbol: string;
+  side: "Buy" | "Sell";
+  updates: {
+    sl?: number;
+    tp?: number;
+    trailingStop?: number;
+    trailingActivatePrice?: number;
+  };
+}
+
+export async function handleManagePosition(
+  client: BybitClient,
+  params: ManagePositionParams
+): Promise<{ updated: boolean }> {
+  const { symbol, side, updates } = params;
+  const positionIdx = side === "Buy" ? 1 : 2;
+
+  const body: Record<string, unknown> = {
+    category: "linear",
+    symbol,
+    positionIdx,
+  };
+
+  if (updates.sl != null) body.stopLoss = String(updates.sl);
+  if (updates.tp != null) body.takeProfit = String(updates.tp);
+  if (updates.trailingStop != null) body.trailingStop = String(updates.trailingStop);
+  if (updates.trailingActivatePrice != null) body.activePrice = String(updates.trailingActivatePrice);
+
+  await client.signedPost("/v5/position/trading-stop", body);
+  return { updated: true };
+}

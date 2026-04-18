@@ -1,4 +1,4 @@
-import { handlePlaceTrade } from "../tools/trade";
+import { handlePlaceTrade, handleClosePosition, handleManagePosition } from "../tools/trade";
 import { BybitClient, BybitError } from "../client";
 import { instrumentsCache } from "../cache";
 
@@ -115,5 +115,93 @@ describe("handlePlaceTrade", () => {
 
     expect(result.partialSuccess).toBe(true);
     expect(result.orderId).toBe("order123");
+  });
+});
+
+const mockPositionList = {
+  list: [{
+    symbol: "BTCUSDT", side: "Buy" as const, size: "0.01", avgPrice: "30000",
+    markPrice: "31000", unrealisedPnl: "10", stopLoss: "29000",
+    takeProfit: "33000", trailingStop: "0", liquidationPrice: "25000",
+    positionIdx: 1 as const, leverage: "10", positionIM: "30",
+  }],
+  category: "linear",
+};
+
+describe("handleClosePosition", () => {
+  beforeEach(() => {
+    instrumentsCache.set("BTCUSDT", mockInstrumentInfo);
+  });
+
+  it("sends market reduceOnly order for full position", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.signedGet as jest.Mock).mockResolvedValue(mockPositionList);
+    (client.signedPost as jest.Mock).mockResolvedValue({ orderId: "close1", orderLinkId: "mcp-close" });
+
+    await handleClosePosition(client, { symbol: "BTCUSDT", side: "Buy" });
+
+    const call = (client.signedPost as jest.Mock).mock.calls[0];
+    expect(call[1].reduceOnly).toBe(true);
+    expect(parseFloat(call[1].qty)).toBeCloseTo(0.01, 3);
+    expect(call[1].positionIdx).toBe(1);
+    expect(call[1].side).toBe("Sell"); // closing a Buy position requires a Sell order
+  });
+
+  it("closes partial position at given percent", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.signedGet as jest.Mock).mockResolvedValue(mockPositionList);
+    (client.signedPost as jest.Mock).mockResolvedValue({ orderId: "close2", orderLinkId: "mcp-close2" });
+
+    await handleClosePosition(client, { symbol: "BTCUSDT", side: "Buy", percent: 50 });
+
+    const call = (client.signedPost as jest.Mock).mock.calls[0];
+    expect(parseFloat(call[1].qty)).toBeCloseTo(0.005, 3);
+  });
+
+  it("uses positionIdx=2 for Sell side", async () => {
+    const shortPosition = {
+      list: [{ ...mockPositionList.list[0], side: "Sell" as const, positionIdx: 2 as const }],
+      category: "linear",
+    };
+    const client = new MockClient("k", "s", "u");
+    (client.signedGet as jest.Mock).mockResolvedValue(shortPosition);
+    (client.signedPost as jest.Mock).mockResolvedValue({ orderId: "close3", orderLinkId: "mcp-close3" });
+
+    await handleClosePosition(client, { symbol: "BTCUSDT", side: "Sell" });
+
+    const call = (client.signedPost as jest.Mock).mock.calls[0];
+    expect(call[1].positionIdx).toBe(2);
+    expect(call[1].side).toBe("Buy"); // closing a Sell position requires a Buy order
+  });
+});
+
+describe("handleManagePosition", () => {
+  it("calls trading-stop with correct fields", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.signedPost as jest.Mock).mockResolvedValue({});
+
+    await handleManagePosition(client, {
+      symbol: "BTCUSDT", side: "Buy",
+      updates: { sl: 29500, tp: 33000 },
+    });
+
+    const call = (client.signedPost as jest.Mock).mock.calls[0];
+    expect(call[0]).toBe("/v5/position/trading-stop");
+    expect(call[1].stopLoss).toBe("29500");
+    expect(call[1].takeProfit).toBe("33000");
+    expect(call[1].positionIdx).toBe(1);
+  });
+
+  it("passes '0' string to cancel existing SL", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.signedPost as jest.Mock).mockResolvedValue({});
+
+    await handleManagePosition(client, {
+      symbol: "BTCUSDT", side: "Buy",
+      updates: { sl: 0 },
+    });
+
+    const call = (client.signedPost as jest.Mock).mock.calls[0];
+    expect(call[1].stopLoss).toBe("0");
   });
 });
