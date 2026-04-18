@@ -155,3 +155,54 @@ describe("scan_market oi_divergence", () => {
     expect(results).toHaveLength(0);
   });
 });
+
+describe("scan_market crowded_positioning", () => {
+  const crowdedLongTicker = {
+    symbol: "YUSDT",
+    lastPrice: "1.0",
+    price24hPcnt: "0.02",
+    fundingRate: "0.0006",
+    nextFundingTime: "0",
+    openInterest: "500000",
+    openInterestValue: "500000",
+    volume24h: "500000",
+    turnover24h: "50000000",
+    highPrice24h: "1.05",
+    lowPrice24h: "0.85",  // range=0.20, rangePos=(1.0-0.85)/0.20=0.75 — NOT in top 20%
+    prevPrice24h: "0.90",
+    bid1Price: "0.999",
+    ask1Price: "1.001",
+  };
+
+  const fundingHistory = {
+    list: [
+      { symbol: "YUSDT", fundingRate: "0.0006", fundingRateTimestamp: "1700000000000" },
+      { symbol: "YUSDT", fundingRate: "0.0005", fundingRateTimestamp: "1699971200000" },
+      { symbol: "YUSDT", fundingRate: "0.0004", fundingRateTimestamp: "1699942400000" },
+      { symbol: "YUSDT", fundingRate: "0.0003", fundingRateTimestamp: "1699913600000" },
+    ],
+  };
+
+  it("returns crowded_long for high positive funding in upper range", async () => {
+    // Need price in top 20%: use high=1.05, low=0.85, price=1.03 → rangePos=(1.03-0.85)/0.20=0.90
+    const ticker = { ...crowdedLongTicker, lastPrice: "1.03" };
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce({ list: [ticker] })
+      .mockResolvedValueOnce(fundingHistory);
+
+    const results = await handleScanMarket(client, "crowded_positioning", 10_000_000, 15) as any[];
+    expect(results).toHaveLength(1);
+    expect(results[0].reading).toBe("crowded_long");
+    expect(results[0].rangePosition).toBeGreaterThan(0.8);
+  });
+
+  it("does not match when funding extreme but price not in extreme range", async () => {
+    // price=1.0, high=1.05, low=0.85, rangePos=0.75 — not in top 20%
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValueOnce({ list: [crowdedLongTicker] });
+
+    const results = await handleScanMarket(client, "crowded_positioning", 10_000_000, 15) as any[];
+    expect(results).toHaveLength(0);
+  });
+});

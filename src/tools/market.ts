@@ -46,6 +46,19 @@ export interface OIDivergenceResult {
   reading: "short_covering" | "new_shorts";
 }
 
+export interface CrowdedPositioningResult {
+  symbol: string;
+  price: number;
+  fundingRate: number;
+  fundingRateAnnualized: number;
+  funding8hAgo: number | null;
+  funding24hAgo: number | null;
+  rangePosition: number;
+  price24hPct: number;
+  volume24hUsd: number;
+  reading: "crowded_long" | "crowded_short";
+}
+
 export interface MarketDataResult {
   ticker: MarketTicker;
   klines: Record<string, MarketKlineBar[]>;
@@ -228,9 +241,68 @@ async function scanOiDivergence(
     .slice(0, limit);
 }
 
-async function scanCrowdedPositioning(client: BybitClient, minVolume: number, limit: number): Promise<unknown[]> {
-  void client; void minVolume; void limit;
-  return [];
+async function scanCrowdedPositioning(
+  client: BybitClient,
+  minVolume: number,
+  limit: number
+): Promise<CrowdedPositioningResult[]> {
+  const FUNDING_THRESHOLD = 0.0005;
+
+  const tickersRes = await client.publicGet<TickersResult>("/v5/market/tickers", { category: "linear" });
+
+  const candidates = tickersRes.list.filter((t) => {
+    const vol = parseFloat(t.turnover24h);
+    const funding = parseFloat(t.fundingRate);
+    if (vol < minVolume) return false;
+    if (Math.abs(funding) <= FUNDING_THRESHOLD) return false;
+
+    const price = parseFloat(t.lastPrice);
+    const high = parseFloat(t.highPrice24h);
+    const low = parseFloat(t.lowPrice24h);
+    if (high === low) return false;
+
+    const rangePos = (price - low) / (high - low);
+    const isCrowdedLong = funding > FUNDING_THRESHOLD && rangePos >= 0.8;
+    const isCrowdedShort = funding < -FUNDING_THRESHOLD && rangePos <= 0.2;
+    return isCrowdedLong || isCrowdedShort;
+  }).slice(0, 20);
+
+  const results = await concurrentMap(candidates, 10, async (t) => {
+    try {
+      const fundingRes = await client.publicGet<FundingHistoryResult>("/v5/market/funding/history", {
+        category: "linear",
+        symbol: t.symbol,
+        limit: "4",
+      });
+
+      const fl = fundingRes.list ?? [];
+      const funding = parseFloat(t.fundingRate);
+      const price = parseFloat(t.lastPrice);
+      const high = parseFloat(t.highPrice24h);
+      const low = parseFloat(t.lowPrice24h);
+      const rangePos = (price - low) / (high - low);
+      const reading: "crowded_long" | "crowded_short" = funding > 0 ? "crowded_long" : "crowded_short";
+
+      return {
+        symbol: t.symbol,
+        price,
+        fundingRate: funding,
+        fundingRateAnnualized: funding * 3 * 365 * 100,
+        funding8hAgo: fl[1] ? parseFloat(fl[1].fundingRate) : null,
+        funding24hAgo: fl[3] ? parseFloat(fl[3].fundingRate) : null,
+        rangePosition: rangePos,
+        price24hPct: parseFloat(t.price24hPcnt) * 100,
+        volume24hUsd: parseFloat(t.turnover24h),
+        reading,
+      } as CrowdedPositioningResult;
+    } catch {
+      return null;
+    }
+  });
+
+  return results
+    .filter((r): r is CrowdedPositioningResult => r !== null)
+    .slice(0, limit);
 }
 
 async function scanVolumeSpike(client: BybitClient, minVolume: number, limit: number): Promise<unknown[]> {
