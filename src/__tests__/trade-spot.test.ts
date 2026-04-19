@@ -12,8 +12,8 @@ const mockInst = { tickSize: "0.01", qtyStep: "0.000001", minNotionalValue: "1" 
 const mockTicker = { list: [{ lastPrice: "30000", turnover24h: "50000000" }] };
 const mockWalletUsdt = {
   list: [{
-    accountType: "UNIFIED", totalEquity: "200", totalMaintenanceMargin: "0",
-    coin: [{ coin: "USDT", walletBalance: "200", totalPositionIM: "0", unrealisedPnl: "0", equity: "200", locked: "0" }],
+    accountType: "UNIFIED", totalEquity: "1000", totalMaintenanceMargin: "0",
+    coin: [{ coin: "USDT", walletBalance: "1000", totalPositionIM: "0", unrealisedPnl: "0", equity: "1000", locked: "0" }],
   }],
 };
 const mockOrderResult = { orderId: "spot-order-1", orderLinkId: "mcp-spot-abc" };

@@ -54,14 +54,18 @@ export async function handlePlaceSpot(
   if (!usdtCoin) throw new Error("USDT coin not found in wallet balance response");
   const freeUsdt = parseFloat(usdtCoin.walletBalance) - parseFloat(usdtCoin.totalPositionIM);
 
+  if (margin > freeUsdt) {
+    throw new Error(
+      `Insufficient USDT balance: need ${margin}, have ${freeUsdt.toFixed(2)} (shortfall: ${(margin - freeUsdt).toFixed(2)})`
+    );
+  }
+
   const qty = floorToStep(margin / execPrice, inst.qtyStep);
 
   if (dry_run) {
     const warnings: string[] = [];
     const pct = (margin / freeUsdt) * 100;
-    if (margin > freeUsdt) {
-      warnings.push(`Insufficient USDT balance: need ${margin}, have ${freeUsdt.toFixed(2)} (shortfall: ${(margin - freeUsdt).toFixed(2)})`);
-    } else if (pct > 20) {
+    if (pct > 20) {
       warnings.push(`Order uses ${pct.toFixed(0)}% of free USDT balance (${freeUsdt.toFixed(2)} USDT)`);
     }
     return {
