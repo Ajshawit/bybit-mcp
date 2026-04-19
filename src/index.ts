@@ -147,28 +147,34 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     let result: unknown;
 
     switch (name) {
-      case "get_account_status":
-        result = await handleGetAccountStatus(client);
+      case "get_account_status": {
+        const data = await handleGetAccountStatus(client);
+        result = { ...data, serverTimestamp: new Date().toISOString() };
         break;
+      }
 
-      case "get_market_data":
-        result = await handleGetMarketData(
+      case "get_market_data": {
+        const data = await handleGetMarketData(
           client,
           a.symbol as string,
           a.klineIntervals as string[] | undefined,
           a.klineLimit as number | undefined,
           a.fundingHistoryLimit as number | undefined
         );
+        result = { ...data, serverTimestamp: new Date().toISOString() };
         break;
+      }
 
-      case "scan_market":
-        result = await handleScanMarket(
+      case "scan_market": {
+        const data = await handleScanMarket(
           client,
           a.filter as ScanFilter,
           a.minVolume24hUsd as number | undefined,
           a.limit as number | undefined
         );
+        result = { results: data, serverTimestamp: new Date().toISOString() };
         break;
+      }
 
       case "place_trade":
         result = await handlePlaceTrade(client, {
