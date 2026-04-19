@@ -187,38 +187,30 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     ...(ENABLE_OPTIONS ? [
       {
-        name: "get_option_chain",
-        description: "Browse available option contracts for BTC, ETH, or SOL. Filter by expiry window, type, OI, and strike range. Returns contracts sorted by DTE then strike, with moneyness computed against current spot.",
+        name: "options_market",
+        description: "Options market data. action='chain': browse contracts for BTC/ETH/SOL (filter by expiry, type, OI, strike range). action='quote': full pricing and Greeks for a single symbol (e.g. BTC-25APR26-80000-C-USDT), set computeGreeksLocal=true to verify against Black-Scholes. action='scan': scan for unusual IV conditions (high_iv/low_iv require ~24h warmup). action='regime': ATM IV, IV percentile, put/call skew, and term structure for BTC/ETH/SOL.",
         inputSchema: {
           type: "object" as const,
           properties: {
-            underlying: { type: "string", enum: ["BTC", "ETH", "SOL"] },
-            minDaysToExpiry: { type: "number", description: "Default: 0" },
-            maxDaysToExpiry: { type: "number", description: "Default: 60" },
-            type: { type: "string", enum: ["call", "put"], description: "Omit for both" },
-            minOpenInterest: { type: "number", description: "Default: 10" },
+            action: { type: "string", enum: ["chain", "quote", "scan", "regime"] },
+            underlying: { type: "string", enum: ["BTC", "ETH", "SOL"], description: "Required for chain and scan" },
+            underlyings: { type: "array", items: { type: "string", enum: ["BTC", "ETH", "SOL"] }, description: "For regime: default all three" },
+            symbol: { type: "string", description: "For quote: full Bybit option symbol" },
+            computeGreeksLocal: { type: "boolean", description: "For quote: verify Greeks via Black-Scholes. Default: false" },
+            minDaysToExpiry: { type: "number", description: "For chain. Default: 0" },
+            maxDaysToExpiry: { type: "number", description: "For chain. Default: 60" },
+            type: { type: "string", enum: ["call", "put"], description: "For chain: omit for both" },
+            minOpenInterest: { type: "number", description: "For chain. Default: 10" },
             strikeRange: {
               type: "object" as const,
-              properties: {
-                minPctFromSpot: { type: "number" },
-                maxPctFromSpot: { type: "number" },
-              },
+              properties: { minPctFromSpot: { type: "number" }, maxPctFromSpot: { type: "number" } },
               required: ["minPctFromSpot", "maxPctFromSpot"],
             },
+            filter: { type: "string", enum: ["high_iv", "low_iv", "skew", "high_oi_change"], description: "For scan" },
+            expiry: { type: "string", enum: ["weekly", "monthly", "all"], description: "For scan. Default: all" },
+            limit: { type: "number", description: "For scan. Default: 10" },
           },
-          required: ["underlying"],
-        },
-      },
-      {
-        name: "get_option_quote",
-        description: "Full pricing and Greeks for a single option contract. Pass the full Bybit symbol (e.g. BTC-25APR26-80000-C-USDT). Set computeGreeksLocal=true to verify Bybit's Greeks against Black-Scholes.",
-        inputSchema: {
-          type: "object" as const,
-          properties: {
-            symbol: { type: "string" },
-            computeGreeksLocal: { type: "boolean", description: "Default: false" },
-          },
-          required: ["symbol"],
+          required: ["action"],
         },
       },
       {
@@ -249,35 +241,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             steps: { type: "number", description: "Price points to compute. Default: 50" },
           },
           required: ["legs", "currentSpot"],
-        },
-      },
-      {
-        name: "scan_options",
-        description: "Scan option contracts for unusual conditions. Implemented filters: high_iv (IV 90th+ percentile), low_iv (10th percentile or lower) — both rank by IV and require ~24h warmup. Placeholder filters (return by OI descending, no special logic yet): skew, high_oi_change. The expiry parameter is accepted but not yet applied.",
-        inputSchema: {
-          type: "object" as const,
-          properties: {
-            underlying: { type: "string", enum: ["BTC", "ETH", "SOL"] },
-            filter: { type: "string", enum: ["high_iv", "low_iv", "skew", "high_oi_change"] },
-            expiry: { type: "string", enum: ["weekly", "monthly", "all"], description: "Default: all" },
-            limit: { type: "number", description: "Default: 10" },
-          },
-          required: ["underlying", "filter"],
-        },
-      },
-      {
-        name: "get_options_regime",
-        description: "ATM IV, IV percentile, put/call skew, and term structure for BTC, ETH, and/or SOL options. Separate from get_market_regime — call when you need options-specific market context. IV percentile requires warmup period after server start.",
-        inputSchema: {
-          type: "object" as const,
-          properties: {
-            underlying: {
-              type: "array",
-              items: { type: "string", enum: ["BTC", "ETH", "SOL"] },
-              description: "Default: all three",
-            },
-          },
-          required: [],
         },
       },
       {
@@ -418,26 +381,42 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       }
 
-      case "get_option_chain": {
-        const data = await handleGetOptionChain(client, {
-          underlying: a.underlying as "BTC" | "ETH" | "SOL",
-          minDaysToExpiry: a.minDaysToExpiry as number | undefined,
-          maxDaysToExpiry: a.maxDaysToExpiry as number | undefined,
-          type: a.type as "call" | "put" | undefined,
-          minOpenInterest: a.minOpenInterest as number | undefined,
-          strikeRange: a.strikeRange as { minPctFromSpot: number; maxPctFromSpot: number } | undefined,
-        });
-        result = { ...data, serverTimestamp: new Date().toISOString() };
-        break;
-      }
-
-      case "get_option_quote": {
-        const data = await handleGetOptionQuote(
-          client,
-          a.symbol as string,
-          a.computeGreeksLocal as boolean | undefined
-        );
-        result = { ...data, serverTimestamp: new Date().toISOString() };
+      case "options_market": {
+        if (!ivStore) throw new Error("Options module not enabled");
+        const action = a.action as string;
+        if (action === "chain") {
+          const data = await handleGetOptionChain(client, {
+            underlying: a.underlying as "BTC" | "ETH" | "SOL",
+            minDaysToExpiry: a.minDaysToExpiry as number | undefined,
+            maxDaysToExpiry: a.maxDaysToExpiry as number | undefined,
+            type: a.type as "call" | "put" | undefined,
+            minOpenInterest: a.minOpenInterest as number | undefined,
+            strikeRange: a.strikeRange as { minPctFromSpot: number; maxPctFromSpot: number } | undefined,
+          });
+          result = { ...data, serverTimestamp: new Date().toISOString() };
+        } else if (action === "quote") {
+          const data = await handleGetOptionQuote(
+            client,
+            a.symbol as string,
+            a.computeGreeksLocal as boolean | undefined
+          );
+          result = { ...data, serverTimestamp: new Date().toISOString() };
+        } else if (action === "scan") {
+          const data = await handleScanOptions(client, ivStore, {
+            underlying: a.underlying as "BTC" | "ETH" | "SOL",
+            filter: a.filter as "high_iv" | "low_iv" | "skew" | "high_oi_change",
+            expiry: a.expiry as "weekly" | "monthly" | "all" | undefined,
+            limit: a.limit as number | undefined,
+          });
+          result = { ...data, serverTimestamp: new Date().toISOString() };
+        } else if (action === "regime") {
+          const data = await handleGetOptionsRegime(client, ivStore, {
+            underlying: a.underlyings as Array<"BTC" | "ETH" | "SOL"> | undefined,
+          });
+          result = { ...data, serverTimestamp: new Date().toISOString() };
+        } else {
+          throw new Error(`Unknown options_market action: ${action}`);
+        }
         break;
       }
 
@@ -447,27 +426,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           currentSpot: a.currentSpot as number,
           underlyingPriceRange: a.underlyingPriceRange as { min: number; max: number } | undefined,
           steps: a.steps as number | undefined,
-        });
-        result = { ...data, serverTimestamp: new Date().toISOString() };
-        break;
-      }
-
-      case "scan_options": {
-        if (!ivStore) throw new Error("Options module not enabled");
-        const data = await handleScanOptions(client, ivStore, {
-          underlying: a.underlying as "BTC" | "ETH" | "SOL",
-          filter: a.filter as "high_iv" | "low_iv" | "skew" | "high_oi_change",
-          expiry: a.expiry as "weekly" | "monthly" | "all" | undefined,
-          limit: a.limit as number | undefined,
-        });
-        result = { ...data, serverTimestamp: new Date().toISOString() };
-        break;
-      }
-
-      case "get_options_regime": {
-        if (!ivStore) throw new Error("Options module not enabled");
-        const data = await handleGetOptionsRegime(client, ivStore, {
-          underlying: a.underlying as Array<"BTC" | "ETH" | "SOL"> | undefined,
         });
         result = { ...data, serverTimestamp: new Date().toISOString() };
         break;
