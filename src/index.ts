@@ -61,44 +61,67 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "place_trade",
-      description: "Place a market order on a linear USDT perpetual. IMPORTANT: Before calling this tool, present the full trade plan as a message and wait for explicit user confirmation. Do not call this tool in the same turn as explaining the trade.",
+      description: "Place a trade on a Bybit linear perp, inverse perp, or spot market. Supports market and limit entry orders. For inverse perps the `margin` field is in base coin units (e.g. BTC for BTCUSD). CONFIRMATION REQUIRED: (1) Present the full trade plan — symbol, category, side, margin, leverage (perps), SL (perps), TP, estimated position size. (2) Wait for the user to reply with 'CONFIRM'. (3) Only call this tool after receiving explicit CONFIRM. Never call this tool in the same turn as presenting the trade plan. Use dry_run=true to preview the computed order without submitting.",
       inputSchema: {
         type: "object" as const,
         properties: {
-          symbol: { type: "string" },
+          symbol: { type: "string", description: "Symbol e.g. BTCUSDT, BTCUSD" },
           side: { type: "string", enum: ["Buy", "Sell"] },
-          marginUsdt: { type: "number", description: "Margin to allocate in USDT" },
-          leverage: { type: "number" },
-          sl: { type: "number", description: "Stop loss price in USDT (absolute)" },
-          tp: { type: "number", description: "Take profit price in USDT (absolute, optional)" },
-          trailingStop: { type: "number", description: "Trailing stop distance in USDT (not %). Optional." },
-          trailingActivatePrice: { type: "number", description: "Price at which trailing stop activates. Optional." },
+          margin: { type: "number", description: "Margin to allocate. USDT for linear/spot; base coin (e.g. BTC) for inverse." },
+          category: { type: "string", enum: ["linear", "inverse", "spot", "spot_margin"], description: "Default: linear" },
+          orderType: { type: "string", enum: ["Market", "Limit"], description: "Default: Market" },
+          price: { type: "number", description: "Required for Limit orders. Limit entry price." },
+          leverage: { type: "number", description: "Required for linear/inverse. Ignored for spot." },
+          sl: { type: "number", description: "Stop loss price. Required for linear/inverse. Not supported for spot." },
+          tp: { type: "number", description: "Take profit price. Optional, perps only." },
+          trailingStop: { type: "number", description: "Trailing stop distance in quote currency. Optional, perps only." },
+          trailingActivatePrice: { type: "number", description: "Price at which trailing stop activates. Optional, perps only." },
           notes: { type: "string", description: "Trade rationale — echoed back in response" },
+          dry_run: { type: "boolean", description: "If true, returns computed order details without submitting. Default: false." },
         },
-        required: ["symbol", "side", "marginUsdt", "leverage", "sl"],
+        required: ["symbol", "side", "margin"],
+        allOf: [
+          {
+            if: { properties: { orderType: { const: "Limit" } }, required: ["orderType"] },
+            then: { required: ["price"] },
+          },
+          {
+            if: {
+              anyOf: [
+                { not: { required: ["category"] } },
+                { properties: { category: { enum: ["linear", "inverse"] } }, required: ["category"] },
+              ],
+            },
+            then: { required: ["leverage", "sl"] },
+          },
+        ],
       },
     },
     {
       name: "close_position",
-      description: "Close an open position (fully or partially) with a market order. Specify side to disambiguate hedge-mode long vs short on the same symbol.",
+      description: "Close an open position (fully or partially). For spot: sells from total wallet balance for the base coin — use `qty` to specify exact amount if you hold the coin from sources outside this MCP. CONFIRMATION REQUIRED: (1) Present the close plan — symbol, category, side, size to close, rationale. (2) Wait for the user to reply with 'CONFIRM'. (3) Only call this tool after receiving explicit CONFIRM. Never call this tool in the same turn as proposing the close.",
       inputSchema: {
         type: "object" as const,
         properties: {
           symbol: { type: "string" },
-          side: { type: "string", enum: ["Buy", "Sell"], description: "Buy = close long, Sell = close short" },
-          percent: { type: "number", description: "Percentage to close (1-100). Default: 100" },
+          side: { type: "string", enum: ["Buy", "Sell"], description: "Buy = long position, Sell = short position. For spot: always Buy (you own the base asset)." },
+          category: { type: "string", enum: ["linear", "inverse", "spot", "spot_margin"], description: "Default: linear" },
+          percent: { type: "number", description: "Percentage to close (1-100). Default: 100. Ignored if qty provided." },
+          qty: { type: "number", description: "Explicit close quantity in base coin. Overrides percent." },
+          notes: { type: "string", description: "Rationale — echoed back in response" },
         },
         required: ["symbol", "side"],
       },
     },
     {
       name: "manage_position",
-      description: "Update stop loss, take profit, or trailing stop on an open position. Pass 0 to cancel an existing SL or TP.",
+      description: "Update stop loss, take profit, or trailing stop on an open perp position (linear or inverse). Not supported for spot. Pass 0 to cancel an existing SL or TP. CONFIRMATION REQUIRED: (1) Present the change plan — which position, which field, old value → new value. (2) Wait for the user to reply with 'CONFIRM'. (3) Only call this tool after receiving explicit CONFIRM. Passing 0 to cancel an SL is destructive — confirm explicitly.",
       inputSchema: {
         type: "object" as const,
         properties: {
           symbol: { type: "string" },
           side: { type: "string", enum: ["Buy", "Sell"] },
+          category: { type: "string", enum: ["linear", "inverse"], description: "Default: linear" },
           updates: {
             type: "object" as const,
             properties: {
@@ -108,6 +131,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
               trailingActivatePrice: { type: "number" },
             },
           },
+          notes: { type: "string", description: "Rationale — echoed back in response" },
         },
         required: ["symbol", "side", "updates"],
       },
@@ -150,13 +174,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = await handlePlaceTrade(client, {
           symbol: a.symbol as string,
           side: a.side as "Buy" | "Sell",
-          marginUsdt: a.marginUsdt as number,
-          leverage: a.leverage as number,
-          sl: a.sl as number,
+          margin: a.margin as number,
+          category: a.category as "linear" | "inverse" | "spot" | "spot_margin" | undefined,
+          orderType: a.orderType as "Market" | "Limit" | undefined,
+          price: a.price as number | undefined,
+          leverage: a.leverage as number | undefined,
+          sl: a.sl as number | undefined,
           tp: a.tp as number | undefined,
           trailingStop: a.trailingStop as number | undefined,
           trailingActivatePrice: a.trailingActivatePrice as number | undefined,
           notes: a.notes as string | undefined,
+          dry_run: a.dry_run as boolean | undefined,
         });
         break;
 
@@ -164,7 +192,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = await handleClosePosition(client, {
           symbol: a.symbol as string,
           side: a.side as "Buy" | "Sell",
+          category: a.category as "linear" | "inverse" | "spot" | "spot_margin" | undefined,
           percent: a.percent as number | undefined,
+          qty: a.qty as number | undefined,
+          notes: a.notes as string | undefined,
         });
         break;
 
@@ -172,9 +203,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = await handleManagePosition(client, {
           symbol: a.symbol as string,
           side: a.side as "Buy" | "Sell",
-          updates: a.updates as {
-            sl?: number; tp?: number; trailingStop?: number; trailingActivatePrice?: number;
-          },
+          category: a.category as "linear" | "inverse" | undefined,
+          updates: a.updates as { sl?: number; tp?: number; trailingStop?: number; trailingActivatePrice?: number },
+          notes: a.notes as string | undefined,
         });
         break;
 
