@@ -52,7 +52,12 @@ export async function handleGetOptionQuote(
     const T = daysToExpiry / 365;
     const local = blackScholesGreeks(parsed.type, underlyingPrice, parsed.strike, T, parseFloat(t.markIv));
     const absDiff5pct = (a: number, b: number) => Math.abs(b) > 0 && Math.abs(a - b) > Math.abs(b) * 0.05;
-    if (absDiff5pct(local.delta, greeks.delta) || absDiff5pct(local.vega, greeks.vega)) {
+    if (
+      absDiff5pct(local.delta, greeks.delta) ||
+      absDiff5pct(local.gamma, greeks.gamma) ||
+      absDiff5pct(local.theta, greeks.theta) ||
+      absDiff5pct(local.vega, greeks.vega)
+    ) {
       console.error(`[options] Greeks diff >5% for ${symbol} — may indicate stale data`);
     }
     greeksLocal = {

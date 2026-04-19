@@ -80,6 +80,8 @@ describe("handleGetOptionQuote", () => {
     (client.publicGet as jest.Mock).mockResolvedValueOnce(mockSingleTicker);
 
     const result = await handleGetOptionQuote(client, "BTC-25APR26-80000-C-USDT");
-    expect(result.daysToExpiry).toBeGreaterThanOrEqual(0);
+    // BTC-25APR26 expires 2026-04-25T08:00Z; test runs ~2026-04-19, so ~6 days out
+    expect(result.daysToExpiry).toBeGreaterThan(0);
+    expect(result.daysToExpiry).toBeLessThan(30);
   });
 });
