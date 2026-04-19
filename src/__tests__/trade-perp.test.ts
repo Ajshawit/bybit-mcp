@@ -137,6 +137,19 @@ describe("handlePlacePerp", () => {
     expect(client.signedPost).not.toHaveBeenCalled();
   });
 
+  it("dry_run wouldSubmit: true when only a size warning fires (not a blocker)", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker);
+    // free = 200 - 50 = 150; margin=50 is 33% → triggers size warning but is not a blocker
+    (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
+
+    const result = await handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 50, leverage: 10, sl: 29000, dry_run: true });
+
+    expect((result as any).wouldSubmit).toBe(true);
+    expect((result as any).warnings[0]).toMatch(/Order uses 33%/);
+    expect(client.signedPost).not.toHaveBeenCalled();
+  });
+
   it("throws when orderType=Limit but no price", async () => {
     const client = new MockClient("k", "s", "u");
     await expect(

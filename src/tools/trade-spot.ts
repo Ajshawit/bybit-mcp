@@ -54,18 +54,17 @@ export async function handlePlaceSpot(
   if (!usdtCoin) throw new Error("USDT coin not found in wallet balance response");
   const freeUsdt = parseFloat(usdtCoin.walletBalance) - parseFloat(usdtCoin.totalPositionIM);
 
-  if (margin > freeUsdt) {
-    throw new Error(
-      `Insufficient USDT balance: need ${margin}, have ${freeUsdt.toFixed(2)} (shortfall: ${(margin - freeUsdt).toFixed(2)})`
-    );
-  }
-
   const qty = floorToStep(margin / execPrice, inst.qtyStep);
 
   if (dry_run) {
     const warnings: string[] = [];
+    if (margin > freeUsdt) {
+      warnings.push(
+        `Insufficient USDT balance: need ${margin}, have ${freeUsdt.toFixed(2)} (shortfall: ${(margin - freeUsdt).toFixed(2)})`
+      );
+    }
     const pct = (margin / freeUsdt) * 100;
-    if (pct > 20) {
+    if (pct > 20 && margin <= freeUsdt) {
       warnings.push(`Order uses ${pct.toFixed(0)}% of free USDT balance (${freeUsdt.toFixed(2)} USDT)`);
     }
     return {
@@ -73,9 +72,15 @@ export async function handlePlaceSpot(
       computedQty: qty, executionPrice: String(execPrice),
       notional: margin.toFixed(2), marginCoin: "USDT",
       marginRequired: String(margin), walletBalanceAvailable: freeUsdt.toFixed(2),
-      warnings, wouldSubmit: warnings.length === 0 && parseFloat(qty) > 0,
+      warnings, wouldSubmit: margin <= freeUsdt && parseFloat(qty) > 0,
       timestamp: new Date().toISOString(),
     };
+  }
+
+  if (margin > freeUsdt) {
+    throw new Error(
+      `Insufficient USDT balance: need ${margin}, have ${freeUsdt.toFixed(2)} (shortfall: ${(margin - freeUsdt).toFixed(2)})`
+    );
   }
 
   const orderBody: Record<string, unknown> = {

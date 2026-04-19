@@ -94,7 +94,7 @@ export async function handlePlacePerp(
       estimatedLiqPrice: estimatedLiqPrice.toFixed(2), liqPriceApproximate: true,
       marginCoin, marginRequired: String(margin),
       walletBalanceAvailable: freeBalance.toFixed(4), warnings,
-      wouldSubmit: warnings.length === 0
+      wouldSubmit: margin <= freeBalance
         && parseFloat(qty) > 0
         && (minNotional === 0 || notional >= minNotional),
       timestamp: new Date().toISOString(),
