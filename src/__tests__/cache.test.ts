@@ -34,14 +34,11 @@ describe("PositionModeCache", () => {
 
   it("returns undefined after TTL expires", () => {
     const cache = new PositionModeCache();
-    const realNow = Date.now;
-    // Set entry at t=0
-    Date.now = () => 0;
+    const spy = jest.spyOn(Date, "now").mockReturnValue(0);
     cache.set("linear", "BTCUSDT", "Buy", 1);
-    // Advance 25 hours past TTL
-    Date.now = () => 25 * 60 * 60 * 1000;
+    spy.mockReturnValue(25 * 60 * 60 * 1000);
     expect(cache.get("linear", "BTCUSDT", "Buy")).toBeUndefined();
-    Date.now = realNow;
+    spy.mockRestore();
   });
 
   it("separate keys for different sides", () => {
