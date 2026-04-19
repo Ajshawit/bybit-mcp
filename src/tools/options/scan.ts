@@ -80,14 +80,12 @@ export async function handleScanOptions(
   }
 ): Promise<ScanOptionsResult> {
   const { underlying, filter, limit = 10 } = params;
-  const now = Date.now();
 
   const chainRes = await client.publicGet<OptionTickersResult>("/v5/market/tickers", {
     category: "option",
     baseCoin: underlying,
   });
 
-  // Record IV samples as side-effect
   for (const t of chainRes.list) {
     const iv = parseFloat(t.markIv);
     if (!isNaN(iv) && iv > 0) {
@@ -95,17 +93,15 @@ export async function handleScanOptions(
     }
   }
 
-  // Determine warmup state using the first contract's bucket as representative
   const repBucket = chainRes.list[0] ? expiryBucket(chainRes.list[0].symbol) : "unknown";
-  const pctAvailable = ivStore.warmupRemaining(underlying, repBucket) === null;
-  const warmupRemaining = pctAvailable ? undefined : (ivStore.warmupRemaining(underlying, repBucket) ?? undefined);
+  const remaining = ivStore.warmupRemaining(underlying, repBucket);
+  const pctAvailable = remaining === null;
+  const warmupRemaining = remaining ?? undefined;
 
-  // Parse and enrich contracts
   const enriched = chainRes.list.flatMap((t) => {
     let parsed: ReturnType<typeof parseOptionSymbol>;
     try { parsed = parseOptionSymbol(t.symbol); } catch { return []; }
 
-    const daysToExpiry = Math.max(0, Math.ceil((parsed.expiry.getTime() - now) / 86400000));
     const iv = parseFloat(t.markIv);
     const bucket = expiryBucket(t.symbol);
     const ivPercentile = pctAvailable ? (ivStore.getPercentile(underlying, bucket, iv) ?? undefined) : undefined;
@@ -114,7 +110,6 @@ export async function handleScanOptions(
       symbol: t.symbol,
       strike: parsed.strike,
       expiry: parsed.expiry.toISOString(),
-      daysToExpiry,
       type: parsed.type,
       iv,
       ivPercentile,
@@ -141,6 +136,6 @@ export async function handleScanOptions(
     filter,
     percentileAvailable: pctAvailable,
     ...(warmupRemaining ? { warmupRemaining } : {}),
-    contracts: sorted.slice(0, limit).map(({ daysToExpiry: _dte, ...rest }) => rest),
+    contracts: sorted.slice(0, limit),
   };
 }
