@@ -105,13 +105,26 @@ describe("handleGetOptionChain", () => {
 
   it("sorts by daysToExpiry ascending then strike ascending", async () => {
     const client = new MockClient("k", "s", "u");
+    // Add a closer expiry with higher strike — should sort FIRST due to nearer DTE
+    const multiExpiryResponse = {
+      list: [
+        mockOptionTicker("BTC-25APR26-100000-C-USDT", "200", "250", "0.70", "50"), // farther expiry, higher strike
+        mockOptionTicker("BTC-25APR26-80000-C-USDT", "1100", "1200", "0.65", "100"), // farther expiry, lower strike
+        mockOptionTicker("BTC-20APR26-90000-C-USDT", "500", "550", "0.67", "30"), // nearer expiry — should come first
+      ],
+      category: "option",
+    };
     (client.publicGet as jest.Mock)
-      .mockResolvedValueOnce(mockChainResponse)
+      .mockResolvedValueOnce(multiExpiryResponse)
       .mockResolvedValueOnce(mockSpotResponse);
 
     const result = await handleGetOptionChain(client, { underlying: "BTC" });
-    const strikes = result.contracts.map((c) => c.strike);
-    expect(strikes[0]).toBeLessThanOrEqual(strikes[strikes.length - 1]);
+
+    // The APR20 contract (nearer DTE) should be first
+    expect(result.contracts[0].symbol).toBe("BTC-20APR26-90000-C-USDT");
+    // The APR25 contracts should be sorted by strike: 80000 before 100000
+    expect(result.contracts[1].strike).toBe(80000);
+    expect(result.contracts[2].strike).toBe(100000);
   });
 
   it("computes moneyness correctly (OTM call when strike > spot)", async () => {

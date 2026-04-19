@@ -50,7 +50,7 @@ export async function handleGetOptionChain(
   const contracts: OptionContract[] = [];
 
   for (const t of chainRes.list) {
-    let parsed;
+    let parsed: ReturnType<typeof parseOptionSymbol>;
     try { parsed = parseOptionSymbol(t.symbol); } catch { continue; }
 
     const daysToExpiry = Math.max(0, Math.ceil((parsed.expiry.getTime() - now) / 86400000));
