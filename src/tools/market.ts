@@ -79,7 +79,7 @@ export interface MarketDataResult {
 
 export interface OhlcResult {
   symbol: string;
-  category: string;
+  category: "linear" | "inverse" | "spot";
   interval: string;
   lastPrice: number;      // candles[0].close, or 0 if empty
   candles: MarketKlineBar[];  // newest-first (Bybit native order)

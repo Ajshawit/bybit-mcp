@@ -358,6 +358,6 @@ describe("handleGetOhlc", () => {
 
     const result = await handleGetOhlc(client, "BTCUSDT");
 
-    expect(result.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+    expect(result.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
   });
 });
