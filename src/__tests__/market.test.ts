@@ -352,13 +352,13 @@ describe("handleGetOhlc", () => {
     expect(result.interval).toBe("D");
   });
 
-  it("result includes a timestamp ISO string", async () => {
+  it("result does not include a timestamp field (serverTimestamp injected at callsite)", async () => {
     const client = new MockClient("k", "s", "u");
     (client.publicGet as jest.Mock).mockResolvedValueOnce(mockKlineResponse);
 
     const result = await handleGetOhlc(client, "BTCUSDT");
 
-    expect(result.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    expect((result as any).timestamp).toBeUndefined();
   });
 });
 
@@ -646,14 +646,14 @@ describe("handleGetMarketRegime", () => {
     await expect(handleGetMarketRegime(client)).rejects.toThrow("Insufficient BTC kline data for SMA computation (got 10 bars, need 50)");
   });
 
-  it("result includes timestamp ISO string", async () => {
+  it("result does not include a timestamp field (serverTimestamp injected at callsite)", async () => {
     const client = new MockClient("k", "s", "u");
     (client.publicGet as jest.Mock)
       .mockResolvedValueOnce(bullKline)
       .mockResolvedValueOnce(neutralTickers);
 
     const result = await handleGetMarketRegime(client);
-    expect(result.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    expect((result as any).timestamp).toBeUndefined();
   });
 
   it("result timeframe field matches param", async () => {

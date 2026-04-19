@@ -88,7 +88,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "get_market_regime",
-      description: "Get macro market context: BTC trend from SMAs (20 and 50 period) and aggregate funding sentiment across top-20 linear perps by volume. Returns a synthesised regime label (risk_on / risk_off / choppy) plus raw signals. Use timeframe='swing' (default, 4h bars, ~1-2 week horizon) for session positioning, or timeframe='macro' (daily bars, ~2-3 month horizon) for structural bias. regime is BTC-specific — does not capture alt/BTC divergence. Throws if Bybit returns insufficient candle data.",
+      description: "BTC trend (SMA20/SMA50) + aggregate funding sentiment across top-20 linear perps by volume. Returns a synthesised regime label (risk_on / risk_off / choppy) plus raw signals. Use timeframe='swing' (default, 4h bars, ~1-2 week horizon) for session positioning, or timeframe='macro' (daily bars, ~2-3 month horizon) for structural bias. regime is BTC trend-based — does not capture alt/BTC divergence. Throws if Bybit returns fewer than 50 candles.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -257,8 +257,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         });
         break;
 
-      case "close_position":
-        result = await handleClosePosition(client, {
+      case "close_position": {
+        const data = await handleClosePosition(client, {
           symbol: a.symbol as string,
           side: a.side as "Buy" | "Sell",
           category: a.category as "linear" | "inverse" | "spot" | "spot_margin" | undefined,
@@ -266,17 +266,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           qty: a.qty as number | undefined,
           notes: a.notes as string | undefined,
         });
+        result = { ...data, serverTimestamp: new Date().toISOString() };
         break;
+      }
 
-      case "manage_position":
-        result = await handleManagePosition(client, {
+      case "manage_position": {
+        const data = await handleManagePosition(client, {
           symbol: a.symbol as string,
           side: a.side as "Buy" | "Sell",
           category: a.category as "linear" | "inverse" | undefined,
           updates: a.updates as { sl?: number; tp?: number; trailingStop?: number; trailingActivatePrice?: number },
           notes: a.notes as string | undefined,
         });
+        result = { ...data, serverTimestamp: new Date().toISOString() };
         break;
+      }
 
       default:
         throw new Error(`Unknown tool: ${name}`);

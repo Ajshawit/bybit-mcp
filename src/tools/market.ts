@@ -83,7 +83,6 @@ export interface OhlcResult {
   interval: string;
   lastPrice: number;      // candles[0].close, or 0 if empty
   candles: MarketKlineBar[];  // newest-first (Bybit native order)
-  timestamp: string;
 }
 
 export async function handleGetMarketData(
@@ -207,7 +206,6 @@ export async function handleGetOhlc(
     interval,
     lastPrice: candles.length > 0 ? candles[0].close : 0,
     candles,
-    timestamp: new Date().toISOString(),
   };
 }
 
@@ -225,7 +223,6 @@ export interface MarketRegimeResult {
     fundingRate: number;
     side: "long_pays_short" | "short_pays_long";
   }>;
-  timestamp: string;
 }
 
 const TIMEFRAME_INTERVAL: Record<"intraday" | "swing" | "macro", string> = {
@@ -320,7 +317,6 @@ export async function handleGetMarketRegime(
     fundingSentiment,
     regime,
     topFundingSymbols,
-    timestamp: new Date().toISOString(),
   };
 }
 
