@@ -225,7 +225,7 @@ export async function handleCloseOptionPosition(
     category: "option",
     symbol,
   });
-  const pos = posRes.list.find((p) => parseFloat(p.size) > 0);
+  const pos = posRes.list.find((p) => p.side !== "None" && parseFloat(p.size) > 0);
   if (!pos) {
     throw new Error(`No open option position found for ${symbol}`);
   }
@@ -241,6 +241,7 @@ export async function handleCloseOptionPosition(
     symbol,
   });
   const t = tickerRes.list[0];
+  if (!t) throw new Error(`No ticker data found for ${symbol}`);
   const bid1Price = parseFloat(t.bid1Price);
   const ask1Price = parseFloat(t.ask1Price);
   const estimatedFillPrice = currentSide === "Long" ? bid1Price : ask1Price;

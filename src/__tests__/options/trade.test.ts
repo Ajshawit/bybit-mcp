@@ -217,7 +217,6 @@ const mockLongPosition = {
     side: "Buy" as const,
     size: "2",
     avgPrice: "1000",
-    markPrice: "1200",
   }],
 };
 
