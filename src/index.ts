@@ -8,6 +8,10 @@ import { BybitClient } from "./client";
 import { handleGetAccountStatus } from "./tools/account";
 import { handleGetMarketData, handleScanMarket, handleGetOhlc, handleGetMarketRegime, ScanFilter } from "./tools/market";
 import { handlePlaceTrade, handleClosePosition, handleManagePosition } from "./tools/trade";
+import {
+  handleGetOptionChain, handleGetOptionQuote, handleGetOptionPayoff,
+  handleScanOptions, handleGetOptionsRegime, IVSampleStore,
+} from "./tools/options/index.js";
 
 const apiKey = process.env.BYBIT_API_KEY;
 const apiSecret = process.env.BYBIT_API_SECRET;
@@ -19,6 +23,8 @@ if (!apiKey || !apiSecret) {
 
 const BASE_URL = "https://api.bybit.com";
 const client = new BybitClient(apiKey, apiSecret, BASE_URL);
+const ENABLE_OPTIONS = process.env.ENABLE_OPTIONS === "true";
+const ivStore = ENABLE_OPTIONS ? new IVSampleStore() : null;
 
 const server = new Server(
   { name: "bybit-mcp", version: "1.0.0" },
@@ -178,6 +184,102 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ["symbol", "side", "updates"],
       },
     },
+    ...(ENABLE_OPTIONS ? [
+      {
+        name: "get_option_chain",
+        description: "Browse available option contracts for BTC, ETH, or SOL. Filter by expiry window, type, OI, and strike range. Returns contracts sorted by DTE then strike, with moneyness computed against current spot.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            underlying: { type: "string", enum: ["BTC", "ETH", "SOL"] },
+            minDaysToExpiry: { type: "number", description: "Default: 0" },
+            maxDaysToExpiry: { type: "number", description: "Default: 60" },
+            type: { type: "string", enum: ["call", "put"], description: "Omit for both" },
+            minOpenInterest: { type: "number", description: "Default: 10" },
+            strikeRange: {
+              type: "object" as const,
+              properties: {
+                minPctFromSpot: { type: "number" },
+                maxPctFromSpot: { type: "number" },
+              },
+              required: ["minPctFromSpot", "maxPctFromSpot"],
+            },
+          },
+          required: ["underlying"],
+        },
+      },
+      {
+        name: "get_option_quote",
+        description: "Full pricing and Greeks for a single option contract. Pass the full Bybit symbol (e.g. BTC-25APR26-80000-C-USDT). Set computeGreeksLocal=true to verify Bybit's Greeks against Black-Scholes.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            symbol: { type: "string" },
+            computeGreeksLocal: { type: "boolean", description: "Default: false" },
+          },
+          required: ["symbol"],
+        },
+      },
+      {
+        name: "get_option_payoff",
+        description: "Compute payoff at expiry for one or more option legs. Pure math — no API call. Returns PnL at each price point, max loss, max profit, and breakeven(s). Use before placing a trade to verify risk/reward.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            legs: {
+              type: "array",
+              items: {
+                type: "object" as const,
+                properties: {
+                  symbol: { type: "string" },
+                  side: { type: "string", enum: ["Buy", "Sell"] },
+                  qty: { type: "number" },
+                  premium: { type: "number", description: "Per-contract premium paid/received" },
+                },
+                required: ["symbol", "side", "qty", "premium"],
+              },
+            },
+            currentSpot: { type: "number", description: "Underlying spot price at time of analysis" },
+            underlyingPriceRange: {
+              type: "object" as const,
+              properties: { min: { type: "number" }, max: { type: "number" } },
+              required: ["min", "max"],
+            },
+            steps: { type: "number", description: "Price points to compute. Default: 50" },
+          },
+          required: ["legs", "currentSpot"],
+        },
+      },
+      {
+        name: "scan_options",
+        description: "Scan option contracts for unusual conditions. Filters: high_iv (IV 90th+ percentile), low_iv (10th percentile or lower), skew (large put/call IV divergence), high_oi_change (OI growth). IV percentile requires ~24h warmup after server start.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            underlying: { type: "string", enum: ["BTC", "ETH", "SOL"] },
+            filter: { type: "string", enum: ["high_iv", "low_iv", "skew", "high_oi_change"] },
+            expiry: { type: "string", enum: ["weekly", "monthly", "all"], description: "Default: all" },
+            limit: { type: "number", description: "Default: 10" },
+          },
+          required: ["underlying", "filter"],
+        },
+      },
+      {
+        name: "get_options_regime",
+        description: "ATM IV, IV percentile, put/call skew, and term structure for BTC, ETH, and/or SOL options. Separate from get_market_regime — call when you need options-specific market context. IV percentile requires warmup period after server start.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            underlying: {
+              type: "array",
+              items: { type: "string", enum: ["BTC", "ETH", "SOL"] },
+              description: "Default: all three",
+            },
+          },
+          required: [],
+        },
+      },
+    ] : []),
   ],
 }));
 
@@ -277,6 +379,61 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           category: a.category as "linear" | "inverse" | undefined,
           updates: a.updates as { sl?: number; tp?: number; trailingStop?: number; trailingActivatePrice?: number },
           notes: a.notes as string | undefined,
+        });
+        result = { ...data, serverTimestamp: new Date().toISOString() };
+        break;
+      }
+
+      case "get_option_chain": {
+        const data = await handleGetOptionChain(client, {
+          underlying: a.underlying as "BTC" | "ETH" | "SOL",
+          minDaysToExpiry: a.minDaysToExpiry as number | undefined,
+          maxDaysToExpiry: a.maxDaysToExpiry as number | undefined,
+          type: a.type as "call" | "put" | undefined,
+          minOpenInterest: a.minOpenInterest as number | undefined,
+          strikeRange: a.strikeRange as { minPctFromSpot: number; maxPctFromSpot: number } | undefined,
+        });
+        result = { ...data, serverTimestamp: new Date().toISOString() };
+        break;
+      }
+
+      case "get_option_quote": {
+        const data = await handleGetOptionQuote(
+          client,
+          a.symbol as string,
+          a.computeGreeksLocal as boolean | undefined
+        );
+        result = { ...data, serverTimestamp: new Date().toISOString() };
+        break;
+      }
+
+      case "get_option_payoff": {
+        const data = handleGetOptionPayoff({
+          legs: a.legs as Array<{ symbol: string; side: "Buy" | "Sell"; qty: number; premium: number }>,
+          currentSpot: a.currentSpot as number,
+          underlyingPriceRange: a.underlyingPriceRange as { min: number; max: number } | undefined,
+          steps: a.steps as number | undefined,
+        });
+        result = { ...data, serverTimestamp: new Date().toISOString() };
+        break;
+      }
+
+      case "scan_options": {
+        if (!ivStore) throw new Error("Options module not enabled");
+        const data = await handleScanOptions(client, ivStore, {
+          underlying: a.underlying as "BTC" | "ETH" | "SOL",
+          filter: a.filter as "high_iv" | "low_iv" | "skew" | "high_oi_change",
+          expiry: a.expiry as "weekly" | "monthly" | "all" | undefined,
+          limit: a.limit as number | undefined,
+        });
+        result = { ...data, serverTimestamp: new Date().toISOString() };
+        break;
+      }
+
+      case "get_options_regime": {
+        if (!ivStore) throw new Error("Options module not enabled");
+        const data = await handleGetOptionsRegime(client, ivStore, {
+          underlying: a.underlying as Array<"BTC" | "ETH" | "SOL"> | undefined,
         });
         result = { ...data, serverTimestamp: new Date().toISOString() };
         break;
