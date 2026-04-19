@@ -123,6 +123,20 @@ describe("handlePlacePerp", () => {
     expect(client.signedPost).not.toHaveBeenCalled();
   });
 
+  it("dry_run returns warning (not error) when margin exceeds free balance", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt); // free = 200 - 50 = 150
+
+    const result = await handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 200, leverage: 10, sl: 29000, dry_run: true });
+
+    expect((result as any).dryRun).toBe(true);
+    expect((result as any).computedQty).toBeDefined();
+    expect((result as any).wouldSubmit).toBe(false);
+    expect((result as any).warnings[0]).toMatch(/Insufficient free capital/);
+    expect(client.signedPost).not.toHaveBeenCalled();
+  });
+
   it("throws when orderType=Limit but no price", async () => {
     const client = new MockClient("k", "s", "u");
     await expect(

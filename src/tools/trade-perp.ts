@@ -63,12 +63,6 @@ export async function handlePlacePerp(
   if (!coin) throw new Error(`${marginCoin} coin not found in wallet balance response`);
   const freeBalance = parseFloat(coin.walletBalance) - parseFloat(coin.totalPositionIM);
 
-  if (margin > freeBalance) {
-    throw new Error(
-      `Insufficient free capital: need ${margin} ${marginCoin}, have ${freeBalance.toFixed(4)} ${marginCoin} (shortfall: ${(margin - freeBalance).toFixed(4)} ${marginCoin})`
-    );
-  }
-
   const rawQty = category === "inverse"
     ? margin * leverage * execPrice
     : (margin * leverage) / execPrice;
@@ -76,9 +70,6 @@ export async function handlePlacePerp(
 
   const notional = category === "inverse" ? rawQty : rawQty * execPrice;
   const minNotional = parseFloat(inst.minNotionalValue);
-  if (minNotional > 0 && notional < minNotional) {
-    throw new Error(`Notional too low: ${notional.toFixed(2)} USD, minimum is ${inst.minNotionalValue} USD`);
-  }
 
   if (dry_run) {
     const mmr = 0.005;
@@ -86,16 +77,34 @@ export async function handlePlacePerp(
       ? execPrice * (1 - 1 / leverage + mmr)
       : execPrice * (1 + 1 / leverage - mmr);
     const warnings: string[] = [];
+    if (margin > freeBalance) {
+      warnings.push(
+        `Insufficient free capital: need ${margin} ${marginCoin}, have ${freeBalance.toFixed(4)} ${marginCoin} (shortfall: ${(margin - freeBalance).toFixed(4)} ${marginCoin})`
+      );
+    }
+    if (minNotional > 0 && notional < minNotional) {
+      warnings.push(`Notional too low: ${notional.toFixed(2)} USD, minimum is ${inst.minNotionalValue} USD`);
+    }
     const pct = (margin / freeBalance) * 100;
-    if (pct > 20) warnings.push(`Order uses ${pct.toFixed(0)}% of free ${marginCoin} balance (${freeBalance.toFixed(4)} ${marginCoin})`);
+    if (pct > 20 && margin <= freeBalance) warnings.push(`Order uses ${pct.toFixed(0)}% of free ${marginCoin} balance (${freeBalance.toFixed(4)} ${marginCoin})`);
     return {
       dryRun: true, category, symbol, side, orderType,
       computedQty: qty, executionPrice: String(execPrice),
       notional: notional.toFixed(2), effectiveLeverage: leverage,
       estimatedLiqPrice: estimatedLiqPrice.toFixed(2), liqPriceApproximate: true,
       marginCoin, marginRequired: String(margin),
-      walletBalanceAvailable: freeBalance.toFixed(4), warnings, wouldSubmit: true,
+      walletBalanceAvailable: freeBalance.toFixed(4), warnings,
+      wouldSubmit: warnings.length === 0 || warnings.every((w) => w.startsWith("Order uses")),
     };
+  }
+
+  if (margin > freeBalance) {
+    throw new Error(
+      `Insufficient free capital: need ${margin} ${marginCoin}, have ${freeBalance.toFixed(4)} ${marginCoin} (shortfall: ${(margin - freeBalance).toFixed(4)} ${marginCoin})`
+    );
+  }
+  if (minNotional > 0 && notional < minNotional) {
+    throw new Error(`Notional too low: ${notional.toFixed(2)} USD, minimum is ${inst.minNotionalValue} USD`);
   }
 
   await client.signedPost("/v5/position/set-leverage", {
