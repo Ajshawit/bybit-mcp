@@ -22,7 +22,7 @@ function normpdf(x: number): number {
 }
 
 /**
- * Black-Scholes Greeks with risk-free rate r=0 (crypto convention).
+ * Black-Scholes Greeks with r=0 (crypto convention).
  * Theta is daily (annualised / 365), negative for long positions.
  * Vega is per 1% change in IV (annualised vega / 100).
  */
@@ -31,8 +31,7 @@ export function blackScholesGreeks(
   spot: number,
   strike: number,
   timeToExpiryYears: number,
-  iv: number,
-  r: number = 0
+  iv: number
 ): Greeks {
   if (timeToExpiryYears <= 0) {
     const intrinsic = type === "call"
@@ -42,12 +41,10 @@ export function blackScholesGreeks(
   }
 
   const sqrtT = Math.sqrt(timeToExpiryYears);
-  const d1 = (Math.log(spot / strike) + (r + 0.5 * iv * iv) * timeToExpiryYears) / (iv * sqrtT);
-  const d2 = d1 - iv * sqrtT;
+  const d1 = (Math.log(spot / strike) + 0.5 * iv * iv * timeToExpiryYears) / (iv * sqrtT);
 
   const nd1 = normpdf(d1);
   const gamma = nd1 / (spot * iv * sqrtT);
-  // Annualised theta then divide by 365 for daily; always negative for long options
   const thetaAnnual = -(spot * nd1 * iv) / (2 * sqrtT);
   const theta = thetaAnnual / 365;
   const vega = spot * nd1 * sqrtT / 100;
