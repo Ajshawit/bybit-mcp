@@ -123,6 +123,7 @@ export interface PlaceTradeResult {
   orderLinkId: string;
   filledQty: string;
   avgFillPrice: number;
+  timestamp: string;
   notes?: string;
   sizeWarning?: string;
   partialSuccess?: boolean;
@@ -134,6 +135,7 @@ export interface ClosePositionResult {
   orderLinkId: string;
   closedQty: string;
   remainingSize: number;
+  timestamp: string;
   notes?: string;
 }
 
@@ -142,6 +144,7 @@ export interface SpotCloseResult {
   orderLinkId: string;
   closedQty: string;
   remainingBalance: number;
+  timestamp: string;
   notes?: string;
 }
 
@@ -169,4 +172,5 @@ export interface DryRunResult {
   walletBalanceAvailable: string;
   warnings: string[];
   wouldSubmit: boolean;
+  timestamp: string;
 }

@@ -73,7 +73,8 @@ export async function handlePlaceSpot(
       computedQty: qty, executionPrice: String(execPrice),
       notional: margin.toFixed(2), marginCoin: "USDT",
       marginRequired: String(margin), walletBalanceAvailable: freeUsdt.toFixed(2),
-      warnings, wouldSubmit: true,
+      warnings, wouldSubmit: warnings.length === 0 && parseFloat(qty) > 0,
+      timestamp: new Date().toISOString(),
     };
   }
 
@@ -94,6 +95,7 @@ export async function handlePlaceSpot(
     orderLinkId: orderRes.orderLinkId,
     filledQty: qty,
     avgFillPrice: execPrice,
+    timestamp: new Date().toISOString(),
     notes,
   };
 
@@ -158,6 +160,7 @@ export async function handleCloseSpot(
     orderLinkId: orderRes.orderLinkId,
     closedQty: closeQty,
     remainingBalance: remaining,
+    timestamp: new Date().toISOString(),
     notes,
   };
 }
