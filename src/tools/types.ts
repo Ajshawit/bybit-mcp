@@ -96,10 +96,15 @@ export interface OrderbookEntry {
   s: string;
 }
 
+// lotSizeFilter has qtyStep for linear/inverse and basePrecision for spot
 export interface InstrumentInfoResult {
   list: Array<{
     symbol: string;
-    lotSizeFilter: { qtyStep: string; minOrderQty: string };
+    lotSizeFilter: {
+      qtyStep?: string;
+      basePrecision?: string;
+      minOrderQty: string;
+    };
     priceFilter: { tickSize: string };
     minNotionalValue: string;
   }>;
@@ -108,4 +113,59 @@ export interface InstrumentInfoResult {
 export interface OrderCreateResult {
   orderId: string;
   orderLinkId: string;
+}
+
+// Shared result types used by both perp and spot handlers
+
+export interface PlaceTradeResult {
+  orderId: string;
+  orderLinkId: string;
+  filledQty: string;
+  avgFillPrice: number;
+  notes?: string;
+  sizeWarning?: string;
+  partialSuccess?: boolean;
+  trailingStopError?: string;
+}
+
+export interface ClosePositionResult {
+  orderId: string;
+  orderLinkId: string;
+  closedQty: string;
+  remainingSize: number;
+  notes?: string;
+}
+
+export interface SpotCloseResult {
+  orderId: string;
+  orderLinkId: string;
+  closedQty: string;
+  remainingBalance: number;
+  notes?: string;
+}
+
+export interface SpotHolding {
+  coin: string;
+  balance: string;
+  usdValue: string;
+  usdValueAvailable: boolean;
+}
+
+export interface DryRunResult {
+  dryRun: true;
+  category: string;
+  symbol: string;
+  side: "Buy" | "Sell";
+  orderType: "Market" | "Limit";
+  computedQty: string;
+  executionPrice: string;
+  notional: string;
+  effectiveLeverage?: number;
+  estimatedLiqPrice?: string;
+  liqPriceApproximate?: boolean;
+  marginCoin: string;
+  marginRequired: string;
+  walletBalanceAvailable: string;
+  warnings: string[];
+  wouldSubmit: boolean;
 }
