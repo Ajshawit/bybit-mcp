@@ -1,6 +1,6 @@
 import { BybitClient } from "../client";
 import { PlaceTradeResult, ClosePositionResult, SpotCloseResult, DryRunResult } from "./types";
-import { handlePlacePerp, handleClosePerp, ClosePositionParams as PerpCloseParams } from "./trade-perp";
+import { handlePlacePerp, handleClosePerp } from "./trade-perp";
 import { handlePlaceSpot, handleCloseSpot } from "./trade-spot";
 import type { PerpCategory } from "./trade-shared";
 
