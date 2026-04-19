@@ -123,6 +123,22 @@ describe("handlePlaceSpot", () => {
       handlePlaceSpot(client, { symbol: "BTCUSDT", side: "Buy", margin: 300, category: "spot", orderType: "Limit" })
     ).rejects.toMatchObject({ message: expect.stringContaining("price is required") });
   });
+
+  it("throws when margin exceeds free USDT balance", async () => {
+    const lowBalanceWallet = {
+      list: [{
+        accountType: "UNIFIED", totalEquity: "50", totalMaintenanceMargin: "0",
+        coin: [{ coin: "USDT", walletBalance: "50", totalPositionIM: "0", unrealisedPnl: "0", equity: "50", locked: "0" }],
+      }],
+    };
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValue(lowBalanceWallet);
+
+    await expect(
+      handlePlaceSpot(client, { symbol: "BTCUSDT", side: "Buy", margin: 300, category: "spot" })
+    ).rejects.toMatchObject({ message: expect.stringContaining("Insufficient USDT balance") });
+  });
 });
 
 const mockBtcWallet = {
