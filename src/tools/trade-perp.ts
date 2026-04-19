@@ -94,7 +94,9 @@ export async function handlePlacePerp(
       estimatedLiqPrice: estimatedLiqPrice.toFixed(2), liqPriceApproximate: true,
       marginCoin, marginRequired: String(margin),
       walletBalanceAvailable: freeBalance.toFixed(4), warnings,
-      wouldSubmit: warnings.length === 0 || warnings.every((w) => w.startsWith("Order uses")),
+      wouldSubmit: warnings.length === 0
+        && parseFloat(qty) > 0
+        && (minNotional === 0 || notional >= minNotional),
     };
   }
 

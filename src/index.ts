@@ -77,7 +77,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           trailingStop: { type: "number", description: "Trailing stop distance in quote currency. Optional, perps only." },
           trailingActivatePrice: { type: "number", description: "Price at which trailing stop activates. Optional, perps only." },
           notes: { type: "string", description: "Trade rationale — echoed back in response" },
-          dry_run: { type: "boolean", description: "If true, returns computed order details without submitting. Default: false." },
+          dry_run: { type: "boolean", description: "If true, returns computed order details without submitting. Default: false. executionPrice in the result is the current last-traded price, not a slippage-adjusted estimate — actual fill may differ." },
         },
         required: ["symbol", "side", "margin"],
         allOf: [
