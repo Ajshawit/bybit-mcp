@@ -11,6 +11,7 @@ import { handlePlaceTrade, handleClosePosition, handleManagePosition } from "./t
 import {
   handleGetOptionChain, handleGetOptionQuote, handleGetOptionPayoff,
   handleScanOptions, handleGetOptionsRegime, IVSampleStore,
+  handlePlaceOptionTrade, handleCloseOptionPosition,
 } from "./tools/options/index.js";
 
 const apiKey = process.env.BYBIT_API_KEY;
@@ -279,6 +280,39 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           required: [],
         },
       },
+      {
+        name: "place_option_trade",
+        description: "place_option_trade — Place a single-leg option order on Bybit (BTC, ETH, SOL). CONFIRMATION REQUIRED: (1) Present the full trade plan — symbol, side, qty, orderType, estimated premium, Greeks, payoff summary. (2) Wait for the user to reply with 'CONFIRM'. (3) Only call this tool after receiving explicit CONFIRM. Recommended workflow: present plan → CONFIRM → call with dry_run=true → verify estimatedPremium and warnings → call again with dry_run=false. Short selling requires OPTIONS_ALLOW_NAKED_SHORT=true unless an offsetting long exists.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            symbol: { type: "string", description: "Full Bybit option symbol e.g. BTC-25APR26-80000-C-USDT" },
+            side: { type: "string", enum: ["Buy", "Sell"] },
+            qty: { type: "number", description: "Number of contracts" },
+            orderType: { type: "string", enum: ["Market", "Limit"] },
+            price: { type: "number", description: "Required for Limit orders" },
+            notes: { type: "string", description: "Trade rationale — echoed back in response" },
+            dry_run: { type: "boolean", description: "If true, returns trade plan without submitting. Default: false" },
+          },
+          required: ["symbol", "side", "qty", "orderType"],
+        },
+      },
+      {
+        name: "close_option_position",
+        description: "close_option_position — Close an open option position (fully or partially). CONFIRMATION REQUIRED: (1) Present the close plan — symbol, qty, side, estimated P&L. (2) Wait for the user to reply with 'CONFIRM'. (3) Only call this tool after receiving explicit CONFIRM. Use dry_run=true first to verify estimated P&L before submitting.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            symbol: { type: "string", description: "Full Bybit option symbol" },
+            qty: { type: "number", description: "Contracts to close. Defaults to full position size." },
+            orderType: { type: "string", enum: ["Market", "Limit"] },
+            price: { type: "number", description: "Required for Limit orders" },
+            notes: { type: "string", description: "Rationale — echoed back in response" },
+            dry_run: { type: "boolean", description: "If true, returns close plan without submitting. Default: false" },
+          },
+          required: ["symbol", "orderType"],
+        },
+      },
     ] : []),
   ],
 }));
@@ -292,7 +326,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     switch (name) {
       case "get_account_status": {
-        const data = await handleGetAccountStatus(client);
+        const data = await handleGetAccountStatus(client, ENABLE_OPTIONS);
         result = { ...data, serverTimestamp: new Date().toISOString() };
         break;
       }
@@ -436,6 +470,35 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           underlying: a.underlying as Array<"BTC" | "ETH" | "SOL"> | undefined,
         });
         result = { ...data, serverTimestamp: new Date().toISOString() };
+        break;
+      }
+
+      case "place_option_trade": {
+        if (!ENABLE_OPTIONS) throw new Error("Options module not enabled");
+        const data = await handlePlaceOptionTrade(client, {
+          symbol: a.symbol as string,
+          side: a.side as "Buy" | "Sell",
+          qty: a.qty as number,
+          orderType: a.orderType as "Market" | "Limit",
+          price: a.price as number | undefined,
+          notes: a.notes as string | undefined,
+          dry_run: a.dry_run as boolean | undefined,
+        });
+        result = data; // serverTimestamp included by handler
+        break;
+      }
+
+      case "close_option_position": {
+        if (!ENABLE_OPTIONS) throw new Error("Options module not enabled");
+        const data = await handleCloseOptionPosition(client, {
+          symbol: a.symbol as string,
+          qty: a.qty as number | undefined,
+          orderType: a.orderType as "Market" | "Limit",
+          price: a.price as number | undefined,
+          notes: a.notes as string | undefined,
+          dry_run: a.dry_run as boolean | undefined,
+        });
+        result = data; // serverTimestamp included by handler
         break;
       }
 
