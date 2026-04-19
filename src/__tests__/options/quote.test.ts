@@ -78,10 +78,11 @@ describe("handleGetOptionQuote", () => {
   it("computes daysToExpiry from symbol", async () => {
     const client = new MockClient("k", "s", "u");
     (client.publicGet as jest.Mock).mockResolvedValueOnce(mockSingleTicker);
+    jest.spyOn(Date, "now").mockReturnValueOnce(new Date("2026-04-19T00:00:00Z").getTime());
 
     const result = await handleGetOptionQuote(client, "BTC-25APR26-80000-C-USDT");
-    // BTC-25APR26 expires 2026-04-25T08:00Z; test runs ~2026-04-19, so ~6 days out
+    // BTC-25APR26 expires 2026-04-25T08:00Z; pinned to 2026-04-19 = 6 days out
     expect(result.daysToExpiry).toBeGreaterThan(0);
-    expect(result.daysToExpiry).toBeLessThan(30);
+    expect(result.daysToExpiry).toBeLessThan(10);
   });
 });

@@ -252,7 +252,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
       {
         name: "scan_options",
-        description: "Scan option contracts for unusual conditions. Filters: high_iv (IV 90th+ percentile), low_iv (10th percentile or lower), skew (large put/call IV divergence), high_oi_change (OI growth). IV percentile requires ~24h warmup after server start.",
+        description: "Scan option contracts for unusual conditions. Implemented filters: high_iv (IV 90th+ percentile), low_iv (10th percentile or lower) — both rank by IV and require ~24h warmup. Placeholder filters (return by OI descending, no special logic yet): skew, high_oi_change. The expiry parameter is accepted but not yet applied.",
         inputSchema: {
           type: "object" as const,
           properties: {
