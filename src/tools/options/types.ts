@@ -96,13 +96,29 @@ export interface OptionPosition {
   qty: number;
   entryPrice: number;
   markPrice: number;
-  premiumPaid: number;     // positive = premium paid (long), negative = credit received (short)
+  premiumFlow: number;     // positive = outflow (premium paid by long), negative = inflow (credit received by short)
   currentValue: number;
   unrealisedPnl: number;
   unrealisedPnlPct: number;
   greeks: { delta: number; gamma: number; theta: number; vega: number };
   daysToExpiry: number;
   breakeven: number;
+}
+
+export interface BybitOptionPosition {
+  symbol: string;
+  side: "Buy" | "Sell" | "None";
+  size: string;
+  avgPrice: string;
+  markPrice: string;
+  delta?: string;
+  gamma?: string;
+  theta?: string;
+  vega?: string;
+}
+
+export interface OptionPositionListResult {
+  list: BybitOptionPosition[];
 }
 
 export interface OptionPayoffPoint {

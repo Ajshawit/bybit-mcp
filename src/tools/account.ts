@@ -1,5 +1,9 @@
 import { BybitClient } from "../client";
 import { WalletBalanceResult, PositionListResult, SpotHolding } from "./types";
+import {
+  parseOptionSymbol, OPTION_MULTIPLIERS, OptionPosition,
+  BybitOptionPosition, OptionPositionListResult,
+} from "./options/types";
 
 export interface AccountPosition {
   symbol: string;
@@ -25,6 +29,7 @@ export interface AccountStatus {
   positions: AccountPosition[];
   inverse_positions: AccountPosition[];
   spot_holdings: SpotHolding[];
+  option_positions: OptionPosition[];  // always present; empty array when none or options disabled
 }
 
 function mapPositions(list: PositionListResult["list"]): AccountPosition[] {
@@ -50,11 +55,62 @@ function mapPositions(list: PositionListResult["list"]): AccountPosition[] {
     });
 }
 
-export async function handleGetAccountStatus(client: BybitClient): Promise<AccountStatus> {
-  const [walletRes, linearRes, inverseRes] = await Promise.all([
+function mapOptionPositions(list: BybitOptionPosition[]): OptionPosition[] {
+  return list
+    .filter((pos) => pos.side !== "None" && parseFloat(pos.size) > 0)
+    .map((pos) => {
+      const parsed = parseOptionSymbol(pos.symbol);
+      const multiplier = OPTION_MULTIPLIERS[parsed.underlying] ?? 1;
+      const side: "Long" | "Short" = pos.side === "Buy" ? "Long" : "Short";
+      const qty = parseFloat(pos.size);
+      const entryPrice = parseFloat(pos.avgPrice);
+      const markPrice = parseFloat(pos.markPrice);
+      const premiumFlow = side === "Long"
+        ? entryPrice * qty * multiplier
+        : -(entryPrice * qty * multiplier);
+      const currentValue = markPrice * qty * multiplier;
+      const unrealisedPnl = side === "Long"
+        ? currentValue - premiumFlow
+        : -premiumFlow - currentValue;
+      const unrealisedPnlPct = (unrealisedPnl / Math.abs(premiumFlow)) * 100;
+      const daysToExpiry = Math.max(0, Math.ceil((parsed.expiry.getTime() - Date.now()) / 86400000));
+      const breakeven = parsed.type === "call"
+        ? parsed.strike + Math.abs(premiumFlow) / (qty * multiplier)
+        : parsed.strike - Math.abs(premiumFlow) / (qty * multiplier);
+      return {
+        symbol: pos.symbol,
+        underlying: parsed.underlying,
+        side,
+        qty,
+        entryPrice,
+        markPrice,
+        premiumFlow,
+        currentValue,
+        unrealisedPnl,
+        unrealisedPnlPct,
+        greeks: {
+          delta: parseFloat(pos.delta ?? "0"),
+          gamma: parseFloat(pos.gamma ?? "0"),
+          theta: parseFloat(pos.theta ?? "0"),
+          vega: parseFloat(pos.vega ?? "0"),
+        },
+        daysToExpiry,
+        breakeven,
+      };
+    });
+}
+
+export async function handleGetAccountStatus(
+  client: BybitClient,
+  includeOptions = false
+): Promise<AccountStatus> {
+  const [walletRes, linearRes, inverseRes, optionRes] = await Promise.all([
     client.signedGet<WalletBalanceResult>("/v5/account/wallet-balance", { accountType: "UNIFIED" }),
     client.signedGet<PositionListResult>("/v5/position/list", { category: "linear", settleCoin: "USDT" }),
     client.signedGet<PositionListResult>("/v5/position/list", { category: "inverse", settleCoin: "USD" }),
+    includeOptions
+      ? client.signedGet<OptionPositionListResult>("/v5/position/list", { category: "option" })
+      : Promise.resolve({ list: [] as BybitOptionPosition[] }),
   ]);
 
   const account = walletRes.list[0];
@@ -83,5 +139,6 @@ export async function handleGetAccountStatus(client: BybitClient): Promise<Accou
     positions: mapPositions(linearRes.list),
     inverse_positions: mapPositions(inverseRes.list),
     spot_holdings,
+    option_positions: mapOptionPositions(optionRes.list),
   };
 }

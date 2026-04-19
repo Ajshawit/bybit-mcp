@@ -245,6 +245,20 @@ describe("handleCloseOptionPosition", () => {
     ).rejects.toThrow(`No open option position found for ${CLOSE_SYMBOL}`);
   });
 
+  it("11b. throws when only side:'None' positions found (filtered as no open position)", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.signedGet as jest.Mock).mockResolvedValueOnce({
+      list: [{ symbol: CLOSE_SYMBOL, side: "None", size: "0", avgPrice: "0" }],
+    });
+
+    await expect(
+      handleCloseOptionPosition(client, {
+        symbol: CLOSE_SYMBOL,
+        orderType: "Market",
+      })
+    ).rejects.toThrow(`No open option position found for ${CLOSE_SYMBOL}`);
+  });
+
   it("12. close qty exceeding position size throws", async () => {
     const client = new MockClient("k", "s", "u");
     (client.signedGet as jest.Mock).mockResolvedValueOnce(mockLongPosition); // size=2
