@@ -1,4 +1,4 @@
-import { handleGetMarketData, handleScanMarket } from "../tools/market";
+import { handleGetMarketData, handleScanMarket, handleGetOhlc } from "../tools/market";
 import { BybitClient } from "../client";
 
 jest.mock("../client");
@@ -261,5 +261,99 @@ describe("scan_market volume_spike", () => {
 
     const results = await handleScanMarket(client, "volume_spike", 10_000_000, 15) as any[];
     expect(results).toHaveLength(0);
+  });
+});
+
+describe("handleGetOhlc", () => {
+  const mockKlineResponse = {
+    list: [
+      ["1700010000000", "30100", "30200", "29900", "30050", "100", "3005000"],
+      ["1700006400000", "29900", "30100", "29800", "30100", "120", "3612000"],
+    ],
+  };
+
+  it("maps kline tuples to MarketKlineBar[] correctly", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValueOnce(mockKlineResponse);
+
+    const result = await handleGetOhlc(client, "BTCUSDT");
+
+    expect(result.candles).toHaveLength(2);
+    expect(result.candles[0]).toEqual({
+      time: 1700010000000,
+      open: 30100,
+      high: 30200,
+      low: 29900,
+      close: 30050,
+      volume: 100,
+      turnover: 3005000,
+    });
+  });
+
+  it("passes category, interval, limit to the API call", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValueOnce(mockKlineResponse);
+
+    await handleGetOhlc(client, "BTCUSD", "inverse", "240", 50);
+
+    expect(client.publicGet).toHaveBeenCalledWith("/v5/market/kline", {
+      category: "inverse",
+      symbol: "BTCUSD",
+      interval: "240",
+      limit: "50",
+    });
+  });
+
+  it("uses defaults: category=linear, interval=60, limit=100", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValueOnce(mockKlineResponse);
+
+    await handleGetOhlc(client, "BTCUSDT");
+
+    expect(client.publicGet).toHaveBeenCalledWith("/v5/market/kline", {
+      category: "linear",
+      symbol: "BTCUSDT",
+      interval: "60",
+      limit: "100",
+    });
+  });
+
+  it("returns empty candles and lastPrice=0 when API returns empty list", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValueOnce({ list: [] });
+
+    const result = await handleGetOhlc(client, "BTCUSDT");
+
+    expect(result.candles).toEqual([]);
+    expect(result.lastPrice).toBe(0);
+  });
+
+  it("sets lastPrice to candles[0].close", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValueOnce(mockKlineResponse);
+
+    const result = await handleGetOhlc(client, "BTCUSDT");
+
+    expect(result.lastPrice).toBe(30050);
+  });
+
+  it("result includes symbol, category, interval metadata", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValueOnce(mockKlineResponse);
+
+    const result = await handleGetOhlc(client, "ETHUSDT", "spot", "D", 200);
+
+    expect(result.symbol).toBe("ETHUSDT");
+    expect(result.category).toBe("spot");
+    expect(result.interval).toBe("D");
+  });
+
+  it("result includes a timestamp ISO string", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValueOnce(mockKlineResponse);
+
+    const result = await handleGetOhlc(client, "BTCUSDT");
+
+    expect(result.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
   });
 });

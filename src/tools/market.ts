@@ -77,6 +77,15 @@ export interface MarketDataResult {
   orderbook: { bids: [number, number][]; asks: [number, number][] };
 }
 
+export interface OhlcResult {
+  symbol: string;
+  category: string;
+  interval: string;
+  lastPrice: number;      // candles[0].close, or 0 if empty
+  candles: MarketKlineBar[];  // newest-first (Bybit native order)
+  timestamp: string;
+}
+
 export async function handleGetMarketData(
   client: BybitClient,
   symbol: string,
@@ -164,6 +173,42 @@ export async function handleGetMarketData(
   };
 
   return { ticker, klines, fundingHistory, orderbook };
+}
+
+export async function handleGetOhlc(
+  client: BybitClient,
+  symbol: string,
+  category: "linear" | "inverse" | "spot" = "linear",
+  interval: string = "60",
+  limit: number = 100
+): Promise<OhlcResult> {
+  const res = await client.publicGet<KlineResult>("/v5/market/kline", {
+    category,
+    symbol,
+    interval,
+    limit: String(limit),
+  });
+
+  const candles: MarketKlineBar[] = (res.list ?? []).map(
+    ([time, open, high, low, close, volume, turnover]) => ({
+      time: parseInt(time),
+      open: parseFloat(open),
+      high: parseFloat(high),
+      low: parseFloat(low),
+      close: parseFloat(close),
+      volume: parseFloat(volume),
+      turnover: parseFloat(turnover),
+    })
+  );
+
+  return {
+    symbol,
+    category,
+    interval,
+    lastPrice: candles.length > 0 ? candles[0].close : 0,
+    candles,
+    timestamp: new Date().toISOString(),
+  };
 }
 
 export type ScanFilter = "oi_divergence" | "crowded_positioning" | "volume_spike";
