@@ -61,8 +61,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
       "args": ["/absolute/path/to/bybit-mcp/dist/index.js"],
       "env": {
         "BYBIT_API_KEY": "your_api_key",
-        "BYBIT_API_SECRET": "your_api_secret",
-        "ENABLE_OPTIONS": "true"
+        "BYBIT_API_SECRET": "your_api_secret"
       }
     }
   }
