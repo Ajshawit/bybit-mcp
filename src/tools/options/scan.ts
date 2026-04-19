@@ -55,6 +55,7 @@ export interface ScanOptionsResult {
   underlying: string;
   filter: string;
   percentileAvailable: boolean;
+  isPlaceholder?: boolean;
   warmupRemaining?: string;
   contracts: Array<{
     symbol: string;
@@ -98,6 +99,8 @@ export async function handleScanOptions(
   const pctAvailable = remaining === null;
   const warmupRemaining = remaining ?? undefined;
 
+  const spot = parseFloat(chainRes.list.find((t) => t.underlyingPrice)?.underlyingPrice ?? "0");
+
   const enriched = chainRes.list.flatMap((t) => {
     let parsed: ReturnType<typeof parseOptionSymbol>;
     try { parsed = parseOptionSymbol(t.symbol); } catch { return []; }
@@ -118,23 +121,32 @@ export async function handleScanOptions(
   });
 
   let sorted: typeof enriched;
-  if (filter === "high_iv") {
-    sorted = enriched
-      .filter((c) => !pctAvailable || (c.ivPercentile ?? 0) >= 90)
-      .sort((a, b) => b.iv - a.iv);
-  } else if (filter === "low_iv") {
-    sorted = enriched
-      .filter((c) => !pctAvailable || (c.ivPercentile ?? 100) <= 10)
-      .sort((a, b) => a.iv - b.iv);
+  if (filter === "high_iv" || filter === "low_iv") {
+    // Exclude deep OTM smile tails — constrain to ±40% of spot when spot is available
+    const nearSpot = spot > 0
+      ? enriched.filter((c) => Math.abs(c.strike - spot) / spot <= 0.4)
+      : enriched;
+    if (filter === "high_iv") {
+      sorted = nearSpot
+        .filter((c) => !pctAvailable || (c.ivPercentile ?? 0) >= 90)
+        .sort((a, b) => b.iv - a.iv);
+    } else {
+      sorted = nearSpot
+        .filter((c) => !pctAvailable || (c.ivPercentile ?? 100) <= 10)
+        .sort((a, b) => a.iv - b.iv);
+    }
   } else {
-    // skew and high_oi_change: sort by OI descending (v1 placeholder)
+    // skew and high_oi_change: placeholder — real analysis not yet implemented
     sorted = enriched.sort((a, b) => b.openInterest - a.openInterest);
   }
+
+  const isPlaceholder = filter === "skew" || filter === "high_oi_change" ? true : undefined;
 
   return {
     underlying,
     filter,
     percentileAvailable: pctAvailable,
+    ...(isPlaceholder ? { isPlaceholder } : {}),
     ...(warmupRemaining ? { warmupRemaining } : {}),
     contracts: sorted.slice(0, limit),
   };
