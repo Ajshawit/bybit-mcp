@@ -44,7 +44,7 @@ export class IVSampleStore {
   }
 }
 
-function expiryBucket(symbol: string): string {
+export function expiryBucket(symbol: string): string {
   const parts = symbol.split("-");
   if (parts.length < 2) return "unknown";
   const exp = parts[1]; // e.g. "25APR26"

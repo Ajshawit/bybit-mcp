@@ -1,6 +1,6 @@
 import { BybitClient } from "../../client";
 import { OptionTickersResult, parseOptionSymbol } from "./types";
-import { IVSampleStore } from "./scan";
+import { IVSampleStore, expiryBucket } from "./scan";
 
 export interface OptionsRegimeSignal {
   atmIv30d: number;
@@ -94,9 +94,7 @@ export async function handleGetOptionsRegime(
     for (const t of list) {
       const iv = parseFloat(t.markIv);
       if (!isNaN(iv) && iv > 0) {
-        const parts = t.symbol.split("-");
-        const bucket = parts[1] ? parts[1].slice(2) : "unknown";
-        ivStore.record(underlying, bucket, iv, new Date());
+        ivStore.record(underlying, expiryBucket(t.symbol), iv, new Date());
       }
     }
 
@@ -107,7 +105,7 @@ export async function handleGetOptionsRegime(
         return p.type === "call" && Math.abs(p.strike - spot) / spot < ATM_PCT_THRESHOLD && dte >= 0;
       } catch { return false; }
     });
-    const nearBucket = nearTicker ? nearTicker.symbol.split("-")[1]?.slice(2) ?? "unknown" : "unknown";
+    const nearBucket = nearTicker ? expiryBucket(nearTicker.symbol) : "unknown";
     const sampleAvailable = ivStore.warmupRemaining(underlying, nearBucket) === null;
     const ivPercentile30d = sampleAvailable && atmIv30d > 0
       ? ivStore.getPercentile(underlying, nearBucket, atmIv30d)
