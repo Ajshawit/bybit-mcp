@@ -6,7 +6,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { BybitClient } from "./client";
 import { handleGetAccountStatus } from "./tools/account";
-import { handleGetMarketData, handleScanMarket, handleGetOhlc, ScanFilter } from "./tools/market";
+import { handleGetMarketData, handleScanMarket, handleGetOhlc, handleGetMarketRegime, ScanFilter } from "./tools/market";
 import { handlePlaceTrade, handleClosePosition, handleManagePosition } from "./tools/trade";
 
 const apiKey = process.env.BYBIT_API_KEY;
@@ -84,6 +84,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
         },
         required: ["symbol"],
+      },
+    },
+    {
+      name: "get_market_regime",
+      description: "Get macro market context: BTC trend from SMAs (20 and 50 period) and aggregate funding sentiment across top-20 linear perps by volume. Returns a synthesised regime label (risk_on / risk_off / choppy) plus raw signals. Use timeframe='swing' (default, 4h bars, ~1-2 week horizon) for session positioning, or timeframe='macro' (daily bars, ~2-3 month horizon) for structural bias. regime is BTC-specific — does not capture alt/BTC divergence. Throws if Bybit returns insufficient candle data.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          timeframe: {
+            type: "string",
+            enum: ["intraday", "swing", "macro"],
+            description: "Trend resolution. Default: swing (4h bars, ~1-2 week horizon)",
+          },
+        },
+        required: [],
       },
     },
     {
@@ -210,6 +225,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           a.category as "linear" | "inverse" | "spot" | undefined,
           a.interval as string | undefined,
           a.limit as number | undefined
+        );
+        result = data;
+        break;
+      }
+
+      case "get_market_regime": {
+        const data = await handleGetMarketRegime(
+          client,
+          a.timeframe as "intraday" | "swing" | "macro" | undefined
         );
         result = data;
         break;
