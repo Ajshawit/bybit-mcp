@@ -29,7 +29,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
       name: "get_account_status",
-      description: "Get current account balance, free capital, margin in use, unrealised PnL, and all open positions with entry price, mark price, PnL%, SL, TP, trailing stop, and liquidation price.",
+      description: "Get current account balance, free capital, margin in use, unrealised PnL, and all open positions. Returns three position arrays: `positions` (linear USDT perps), `inverse_positions` (coin-margined perps), and `spot_holdings` (non-USDT spot balances with USD value). Each position includes entry price, mark price, PnL%, SL, TP, trailing stop, and liquidation price.",
       inputSchema: { type: "object" as const, properties: {}, required: [] },
     },
     {
@@ -61,14 +61,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "place_trade",
-      description: "Place a trade on a Bybit linear perp, inverse perp, or spot market. Supports market and limit entry orders. For inverse perps the `margin` field is in base coin units (e.g. BTC for BTCUSD). CONFIRMATION REQUIRED: (1) Present the full trade plan — symbol, category, side, margin, leverage (perps), SL (perps), TP, estimated position size. (2) Wait for the user to reply with 'CONFIRM'. (3) Only call this tool after receiving explicit CONFIRM. Never call this tool in the same turn as presenting the trade plan. Use dry_run=true to preview the computed order without submitting.",
+      description: "Place a trade on a Bybit linear perp, inverse perp, or spot market. Supports market and limit entry orders. For inverse perps the `margin` field is in base coin units (e.g. BTC for BTCUSD). CONFIRMATION REQUIRED: (1) Present the full trade plan — symbol, category, side, margin, leverage (perps), SL (perps), TP, estimated position size. (2) Wait for the user to reply with 'CONFIRM'. (3) Only call this tool after receiving explicit CONFIRM. Never call this tool in the same turn as presenting the trade plan. When sizing is uncertain, call once with dry_run=true to verify computed qty and notional before the live call — dry_run does not require a separate CONFIRM.",
       inputSchema: {
         type: "object" as const,
         properties: {
           symbol: { type: "string", description: "Symbol e.g. BTCUSDT, BTCUSD" },
           side: { type: "string", enum: ["Buy", "Sell"] },
           margin: { type: "number", description: "Margin to allocate. USDT for linear/spot; base coin (e.g. BTC) for inverse." },
-          category: { type: "string", enum: ["linear", "inverse", "spot", "spot_margin"], description: "Default: linear" },
+          category: { type: "string", enum: ["linear", "inverse", "spot", "spot_margin"], description: "Default: linear (futures/perp). Pass 'spot' or 'spot_margin' if the user intends to own the asset rather than hold a perp position." },
           orderType: { type: "string", enum: ["Market", "Limit"], description: "Default: Market" },
           price: { type: "number", description: "Required for Limit orders. Limit entry price." },
           leverage: { type: "number", description: "Required for linear/inverse. Ignored for spot." },
@@ -104,7 +104,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         type: "object" as const,
         properties: {
           symbol: { type: "string" },
-          side: { type: "string", enum: ["Buy", "Sell"], description: "Buy = long position, Sell = short position. For spot: always Buy (you own the base asset)." },
+          side: { type: "string", enum: ["Buy", "Sell"], description: "The side of the position being closed (not the order direction). 'Buy' closes a long, 'Sell' closes a short. For spot: always 'Buy' since you can only hold (not short) the base asset." },
           category: { type: "string", enum: ["linear", "inverse", "spot", "spot_margin"], description: "Default: linear" },
           percent: { type: "number", description: "Percentage to close (1-100). Default: 100. Ignored if qty provided." },
           qty: { type: "number", description: "Explicit close quantity in base coin. Overrides percent." },
