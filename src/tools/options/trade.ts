@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { BybitClient } from "../../client";
-import { parseOptionSymbol, OPTION_MULTIPLIERS, OptionPayoffSummary } from "./types";
+import { parseOptionSymbol, OPTION_MULTIPLIERS, OptionPayoffSummary, OptionTickersResult } from "./types";
+import { WalletBalanceResult, OrderCreateResult } from "../types";
 import { handleGetOptionPayoff } from "./payoff";
 
 export interface PlaceOptionTradeParams {
@@ -75,27 +76,6 @@ export interface OptionCloseDryRunResult {
   serverTimestamp: string;
 }
 
-interface TickerResult {
-  list: Array<{
-    symbol: string;
-    bid1Price: string;
-    ask1Price: string;
-    markPrice: string;
-    markIv: string;
-    delta: string;
-    gamma: string;
-    theta: string;
-    vega: string;
-    underlyingPrice?: string;
-  }>;
-}
-
-interface WalletResult {
-  list: Array<{
-    coin: Array<{ coin: string; walletBalance: string }>;
-  }>;
-}
-
 interface PositionResult {
   list: Array<{
     symbol: string;
@@ -105,10 +85,6 @@ interface PositionResult {
   }>;
 }
 
-interface OrderResult {
-  orderId: string;
-  orderLinkId: string;
-}
 
 export async function handlePlaceOptionTrade(
   client: BybitClient,
@@ -125,7 +101,7 @@ export async function handlePlaceOptionTrade(
     throw new Error(`Contract ${symbol} has expired`);
   }
 
-  const tickerRes = await client.publicGet<TickerResult>("/v5/market/tickers", {
+  const tickerRes = await client.publicGet<OptionTickersResult>("/v5/market/tickers", {
     category: "option",
     symbol,
   });
@@ -160,7 +136,7 @@ export async function handlePlaceOptionTrade(
   }
 
   if (side === "Buy") {
-    const walletRes = await client.signedGet<WalletResult>("/v5/account/wallet-balance", {
+    const walletRes = await client.signedGet<WalletBalanceResult>("/v5/account/wallet-balance", {
       accountType: "UNIFIED",
     });
     const account = walletRes.list[0];
@@ -174,7 +150,7 @@ export async function handlePlaceOptionTrade(
     }
 
     const capPct = process.env.OPTIONS_MAX_PREMIUM_PCT_BALANCE
-      ? parseInt(process.env.OPTIONS_MAX_PREMIUM_PCT_BALANCE, 10)
+      ? parseFloat(process.env.OPTIONS_MAX_PREMIUM_PCT_BALANCE)
       : null;
     if (capPct != null && estimatedPremium > (capPct / 100) * usdcBalance) {
       throw new Error(
@@ -191,6 +167,9 @@ export async function handlePlaceOptionTrade(
       currentSpot: underlyingPrice,
     });
     const warnings: string[] = [];
+    if (underlyingPrice === 0) {
+      warnings.push("underlyingPrice unavailable from ticker; payoff summary may be inaccurate");
+    }
     if (ask1Price > 0 && (ask1Price - bid1Price) / ask1Price > 0.1) {
       warnings.push(`Wide bid-ask spread: bid ${bid1Price}, ask ${ask1Price}`);
     }
@@ -219,7 +198,7 @@ export async function handlePlaceOptionTrade(
     orderBody.price = String(price);
   }
 
-  const orderRes = await client.signedPost<OrderResult>("/v5/order/create", orderBody);
+  const orderRes = await client.signedPost<OrderCreateResult>("/v5/order/create", orderBody);
 
   return {
     orderId: orderRes.orderId,
