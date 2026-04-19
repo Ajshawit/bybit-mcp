@@ -188,7 +188,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     ...(ENABLE_OPTIONS ? [
       {
         name: "options_market",
-        description: "Options market data. action='chain': browse contracts for BTC/ETH/SOL (filter by expiry, type, OI, strike range). action='quote': full pricing and Greeks for a single symbol (e.g. BTC-25APR26-80000-C-USDT), set computeGreeksLocal=true to verify against Black-Scholes. action='scan': scan for unusual IV conditions (high_iv/low_iv require ~24h warmup). action='regime': ATM IV, IV percentile, put/call skew, and term structure for BTC/ETH/SOL.",
+        description: "Options market data — four actions. action='chain': browse contracts for BTC/ETH/SOL, returns contracts[]. action='quote': full pricing + Greeks for a single symbol (e.g. BTC-25APR26-80000-C-USDT), returns contract details + greeks object. action='scan': scan for unusual IV (high_iv/low_iv require ~24h warmup), returns anomaly contracts[] + percentileAvailable. action='regime': ATM IV, IV percentile, put/call skew, term structure per underlying, returns per-underlying regime object.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -211,6 +211,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             limit: { type: "number", description: "For scan. Default: 10" },
           },
           required: ["action"],
+          allOf: [
+            {
+              if: { properties: { action: { const: "chain" } }, required: ["action"] },
+              then: { required: ["underlying"] },
+            },
+            {
+              if: { properties: { action: { const: "quote" } }, required: ["action"] },
+              then: { required: ["symbol"] },
+            },
+            {
+              if: { properties: { action: { const: "scan" } }, required: ["action"] },
+              then: { required: ["underlying", "filter"] },
+            },
+          ],
         },
       },
       {
