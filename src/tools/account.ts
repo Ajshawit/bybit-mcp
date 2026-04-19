@@ -1,5 +1,5 @@
 import { BybitClient } from "../client";
-import { WalletBalanceResult, PositionListResult } from "./types";
+import { WalletBalanceResult, PositionListResult, SpotHolding } from "./types";
 
 export interface AccountPosition {
   symbol: string;
@@ -23,31 +23,12 @@ export interface AccountStatus {
   unrealisedPnl: number;
   maintenanceMargin: number;
   positions: AccountPosition[];
+  inverse_positions: AccountPosition[];
+  spot_holdings: SpotHolding[];
 }
 
-export async function handleGetAccountStatus(client: BybitClient): Promise<AccountStatus> {
-  const [walletRes, posRes] = await Promise.all([
-    client.signedGet<WalletBalanceResult>("/v5/account/wallet-balance", {
-      accountType: "UNIFIED",
-      coin: "USDT",
-    }),
-    client.signedGet<PositionListResult>("/v5/position/list", {
-      category: "linear",
-      settleCoin: "USDT",
-    }),
-  ]);
-
-  const account = walletRes.list[0];
-  const usdtCoin = account.coin.find((c) => c.coin === "USDT");
-  if (!usdtCoin) {
-    throw new Error("USDT coin not found in wallet balance response");
-  }
-
-  const walletBalance = parseFloat(usdtCoin.walletBalance);
-  const totalPositionIM = parseFloat(usdtCoin.totalPositionIM);
-  const unrealisedPnl = parseFloat(usdtCoin.unrealisedPnl);
-
-  const positions: AccountPosition[] = posRes.list
+function mapPositions(list: PositionListResult["list"]): AccountPosition[] {
+  return list
     .filter((p) => parseFloat(p.size) > 0)
     .map((p) => {
       const side = p.side === "Buy" ? "LONG" : "SHORT";
@@ -57,15 +38,9 @@ export async function handleGetAccountStatus(client: BybitClient): Promise<Accou
       const uPnlPct = side === "LONG"
         ? (mark - entry) / entry * 100
         : (entry - mark) / entry * 100;
-
       return {
-        symbol: p.symbol,
-        side,
-        size: parseFloat(p.size),
-        entryPrice: entry,
-        markPrice: mark,
-        uPnl,
-        uPnlPct,
+        symbol: p.symbol, side, size: parseFloat(p.size),
+        entryPrice: entry, markPrice: mark, uPnl, uPnlPct,
         sl: p.stopLoss ? parseFloat(p.stopLoss) : null,
         tp: p.takeProfit ? parseFloat(p.takeProfit) : null,
         trailingStop: parseFloat(p.trailingStop || "0"),
@@ -73,6 +48,31 @@ export async function handleGetAccountStatus(client: BybitClient): Promise<Accou
         positionIdx: p.positionIdx,
       };
     });
+}
+
+export async function handleGetAccountStatus(client: BybitClient): Promise<AccountStatus> {
+  const [walletRes, linearRes, inverseRes] = await Promise.all([
+    client.signedGet<WalletBalanceResult>("/v5/account/wallet-balance", { accountType: "UNIFIED" }),
+    client.signedGet<PositionListResult>("/v5/position/list", { category: "linear", settleCoin: "USDT" }),
+    client.signedGet<PositionListResult>("/v5/position/list", { category: "inverse", settleCoin: "USD" }),
+  ]);
+
+  const account = walletRes.list[0];
+  const usdtCoin = account.coin.find((c) => c.coin === "USDT");
+  if (!usdtCoin) throw new Error("USDT coin not found in wallet balance response");
+
+  const walletBalance = parseFloat(usdtCoin.walletBalance);
+  const totalPositionIM = parseFloat(usdtCoin.totalPositionIM);
+  const unrealisedPnl = parseFloat(usdtCoin.unrealisedPnl);
+
+  const spot_holdings: SpotHolding[] = account.coin
+    .filter((c) => c.coin !== "USDT" && parseFloat(c.walletBalance) > 0)
+    .map((c) => ({
+      coin: c.coin,
+      balance: c.walletBalance,
+      usdValue: (c as any).usdValue ?? "0",
+      usdValueAvailable: (c as any).usdValue != null,
+    }));
 
   return {
     totalEquity: parseFloat(account.totalEquity),
@@ -80,6 +80,8 @@ export async function handleGetAccountStatus(client: BybitClient): Promise<Accou
     marginInUse: totalPositionIM,
     unrealisedPnl,
     maintenanceMargin: parseFloat(account.totalMaintenanceMargin),
-    positions,
+    positions: mapPositions(linearRes.list),
+    inverse_positions: mapPositions(inverseRes.list),
+    spot_holdings,
   };
 }
