@@ -24,6 +24,8 @@ export interface PlacePerpParams {
   dry_run?: boolean;
 }
 
+// Assumes standard inverse perp symbols end in "USD" (e.g. BTCUSD → BTC).
+// Non-standard suffixes (e.g. quarterly BTCUSDH25) are out of scope.
 function parseBaseCoin(symbol: string): string {
   return symbol.replace(/USD$/, "");
 }
@@ -136,7 +138,7 @@ export async function handlePlacePerp(
     orderId: orderRes!.orderId,
     orderLinkId: orderRes!.orderLinkId,
     filledQty: qty,
-    avgFillPrice: marketPrice,
+    avgFillPrice: execPrice,
     notes,
   };
 
