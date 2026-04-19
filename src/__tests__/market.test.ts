@@ -337,14 +337,18 @@ describe("handleGetOhlc", () => {
     expect(result.lastPrice).toBe(30050);
   });
 
-  it("result includes symbol, category, interval metadata", async () => {
+  it("passes D/W/M intervals to the API as-is (not transformed)", async () => {
     const client = new MockClient("k", "s", "u");
     (client.publicGet as jest.Mock).mockResolvedValueOnce(mockKlineResponse);
 
     const result = await handleGetOhlc(client, "ETHUSDT", "spot", "D", 200);
 
-    expect(result.symbol).toBe("ETHUSDT");
-    expect(result.category).toBe("spot");
+    expect(client.publicGet).toHaveBeenCalledWith("/v5/market/kline", {
+      category: "spot",
+      symbol: "ETHUSDT",
+      interval: "D",
+      limit: "200",
+    });
     expect(result.interval).toBe("D");
   });
 
