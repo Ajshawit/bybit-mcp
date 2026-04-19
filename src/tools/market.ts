@@ -211,6 +211,119 @@ export async function handleGetOhlc(
   };
 }
 
+export interface MarketRegimeResult {
+  timeframe: "intraday" | "swing" | "macro";
+  btcPrice: number;
+  sma20: number;
+  sma50: number;
+  btcTrend: "bull" | "bear" | "choppy";
+  medianFunding: number;
+  fundingSentiment: "long_heavy" | "short_heavy" | "neutral";
+  regime: "risk_on" | "risk_off" | "choppy";
+  topFundingSymbols: Array<{
+    symbol: string;
+    fundingRate: number;
+    side: "long_pays_short" | "short_pays_long";
+  }>;
+  timestamp: string;
+}
+
+const TIMEFRAME_INTERVAL: Record<"intraday" | "swing" | "macro", string> = {
+  intraday: "60",
+  swing: "240",
+  macro: "D",
+};
+
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[mid - 1] + sorted[mid]) / 2
+    : sorted[mid];
+}
+
+export async function handleGetMarketRegime(
+  client: BybitClient,
+  timeframe: "intraday" | "swing" | "macro" = "swing"
+): Promise<MarketRegimeResult> {
+  const interval = TIMEFRAME_INTERVAL[timeframe];
+
+  const [klineRes, tickersRes] = await Promise.all([
+    client.publicGet<KlineResult>("/v5/market/kline", {
+      category: "linear",
+      symbol: "BTCUSDT",
+      interval,
+      limit: "50",
+    }),
+    client.publicGet<TickersResult>("/v5/market/tickers", { category: "linear" }),
+  ]);
+
+  const bars = klineRes.list ?? [];
+  if (bars.length < 20) {
+    throw new Error(
+      `Insufficient BTC kline data for SMA computation (got ${bars.length} bars, need 20)`
+    );
+  }
+
+  // Reverse from newest-first to oldest-first for MA computation
+  const closes = bars.map((b) => parseFloat(b[4])).reverse();
+  const sma50 = closes.reduce((s, v) => s + v, 0) / closes.length;
+  const sma20 = closes.slice(-20).reduce((s, v) => s + v, 0) / 20;
+  const btcPrice = closes[closes.length - 1];
+
+  const btcTrend: "bull" | "bear" | "choppy" =
+    btcPrice > sma20 && sma20 > sma50 ? "bull"
+    : btcPrice < sma20 && sma20 < sma50 ? "bear"
+    : "choppy";
+
+  const tickers = tickersRes.list ?? [];
+  const validTickers = tickers
+    .map((t) => ({ t, rate: parseFloat(t.fundingRate) }))
+    .filter(({ rate }) => !isNaN(rate));
+
+  const top20FundingRates = validTickers
+    .sort((a, b) => parseFloat(b.t.turnover24h) - parseFloat(a.t.turnover24h))
+    .slice(0, 20)
+    .map(({ rate }) => rate);
+
+  const medianFunding = median(top20FundingRates);
+
+  const fundingSentiment: "long_heavy" | "short_heavy" | "neutral" =
+    medianFunding > 0.0005 ? "long_heavy"
+    : medianFunding < -0.0005 ? "short_heavy"
+    : "neutral";
+
+  const regime: "risk_on" | "risk_off" | "choppy" =
+    btcTrend === "bull" && fundingSentiment !== "short_heavy" ? "risk_on"
+    : btcTrend === "bear" && fundingSentiment !== "long_heavy" ? "risk_off"
+    : "choppy";
+
+  const MIN_VOLUME = 10_000_000;
+  const topFundingSymbols = validTickers
+    .filter(({ t }) => parseFloat(t.turnover24h) >= MIN_VOLUME)
+    .sort((a, b) => Math.abs(b.rate) - Math.abs(a.rate))
+    .slice(0, 5)
+    .map(({ t, rate }) => ({
+      symbol: t.symbol,
+      fundingRate: rate,
+      side: rate > 0 ? "long_pays_short" as const : "short_pays_long" as const,
+    }));
+
+  return {
+    timeframe,
+    btcPrice,
+    sma20,
+    sma50,
+    btcTrend,
+    medianFunding,
+    fundingSentiment,
+    regime,
+    topFundingSymbols,
+    timestamp: new Date().toISOString(),
+  };
+}
+
 export type ScanFilter = "oi_divergence" | "crowded_positioning" | "volume_spike";
 
 export async function handleScanMarket(

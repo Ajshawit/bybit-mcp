@@ -1,4 +1,4 @@
-import { handleGetMarketData, handleScanMarket, handleGetOhlc } from "../tools/market";
+import { handleGetMarketData, handleScanMarket, handleGetOhlc, handleGetMarketRegime } from "../tools/market";
 import { BybitClient } from "../client";
 
 jest.mock("../client");
@@ -359,5 +359,321 @@ describe("handleGetOhlc", () => {
     const result = await handleGetOhlc(client, "BTCUSDT");
 
     expect(result.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+  });
+});
+
+describe("handleGetMarketRegime", () => {
+  function makeBtcKline(closes: number[]) {
+    // Bybit order: newest first. closes[0] = newest.
+    return {
+      list: closes.map((c, i) => [
+        String(1700010000000 - i * 14400000),
+        String(c - 50), String(c + 50), String(c - 100), String(c), "100", "3000000",
+      ]),
+    };
+  }
+
+  function makeTickers(entries: Array<{ symbol: string; fundingRate: string; turnover24h: string }>) {
+    return {
+      list: entries.map((e) => ({
+        symbol: e.symbol,
+        lastPrice: "30000",
+        price24hPcnt: "0.01",
+        fundingRate: e.fundingRate,
+        nextFundingTime: "1700000000000",
+        openInterest: "1000",
+        openInterestValue: "30000000",
+        volume24h: "500",
+        turnover24h: e.turnover24h,
+        highPrice24h: "31000",
+        lowPrice24h: "29000",
+        prevPrice24h: "29500",
+        bid1Price: "29999",
+        ask1Price: "30001",
+      })),
+    };
+  }
+
+  // bull: newest-first [35000, 34000*19, 28000*30]
+  // After reversal: [28000*30, 34000*19, 35000]
+  // sma50 = (30*28000 + 19*34000 + 35000)/50 = 30420
+  // sma20 = (19*34000 + 35000)/20 = 34050
+  // btcPrice = 35000
+  // 35000 > 34050 > 30420 → bull
+  const bullKline = makeBtcKline([35000, ...Array(19).fill(34000), ...Array(30).fill(28000)]);
+
+  // bear: newest-first [25000, 26000*19, 32000*30]
+  // reversed: [32000*30, 26000*19, 25000]
+  // sma50 = (30*32000+19*26000+25000)/50 = 29580
+  // sma20 = (19*26000+25000)/20 = 25950
+  // btcPrice = 25000
+  // 25000 < 25950 < 29580 → bear
+  const bearKline = makeBtcKline([25000, ...Array(19).fill(26000), ...Array(30).fill(32000)]);
+
+  // choppy: newest-first [31000*20, 28000*30]
+  // reversed: [28000*30, 31000*20]
+  // sma50 = (30*28000+20*31000)/50 = 29200
+  // sma20 = 31000, btcPrice = 31000
+  // 31000 > 31000 is false → choppy
+  const choppyKline = makeBtcKline([...Array(20).fill(31000), ...Array(30).fill(28000)]);
+
+  const neutralTickers = makeTickers(
+    Array(20).fill(null).map((_, i) => ({
+      symbol: `SYM${i}USDT`,
+      fundingRate: "0.0001",
+      turnover24h: "50000000",
+    }))
+  );
+
+  const longHeavyTickers = makeTickers(
+    Array(20).fill(null).map((_, i) => ({
+      symbol: `SYM${i}USDT`,
+      fundingRate: "0.0008",
+      turnover24h: "50000000",
+    }))
+  );
+
+  const shortHeavyTickers = makeTickers(
+    Array(20).fill(null).map((_, i) => ({
+      symbol: `SYM${i}USDT`,
+      fundingRate: "-0.0008",
+      turnover24h: "50000000",
+    }))
+  );
+
+  it("computes SMA20 and SMA50 correctly", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce(bullKline)
+      .mockResolvedValueOnce(neutralTickers);
+
+    const result = await handleGetMarketRegime(client);
+
+    expect(result.sma20).toBeCloseTo(34050, 0);
+    expect(result.sma50).toBeCloseTo(30420, 0);
+    expect(result.btcPrice).toBe(35000);
+  });
+
+  it("btcTrend: bull when price > sma20 > sma50", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce(bullKline)
+      .mockResolvedValueOnce(neutralTickers);
+
+    const result = await handleGetMarketRegime(client);
+    expect(result.btcTrend).toBe("bull");
+  });
+
+  it("btcTrend: bear when price < sma20 < sma50", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce(bearKline)
+      .mockResolvedValueOnce(neutralTickers);
+
+    const result = await handleGetMarketRegime(client);
+    expect(result.btcTrend).toBe("bear");
+  });
+
+  it("btcTrend: choppy when price equals sma20", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce(choppyKline)
+      .mockResolvedValueOnce(neutralTickers);
+
+    const result = await handleGetMarketRegime(client);
+    expect(result.btcTrend).toBe("choppy");
+  });
+
+  it("fundingSentiment: long_heavy when median > 0.0005", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce(bullKline)
+      .mockResolvedValueOnce(longHeavyTickers);
+
+    const result = await handleGetMarketRegime(client);
+    expect(result.fundingSentiment).toBe("long_heavy");
+  });
+
+  it("fundingSentiment: short_heavy when median < -0.0005", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce(bullKline)
+      .mockResolvedValueOnce(shortHeavyTickers);
+
+    const result = await handleGetMarketRegime(client);
+    expect(result.fundingSentiment).toBe("short_heavy");
+  });
+
+  it("fundingSentiment: neutral when median within threshold", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce(bullKline)
+      .mockResolvedValueOnce(neutralTickers);
+
+    const result = await handleGetMarketRegime(client);
+    expect(result.fundingSentiment).toBe("neutral");
+  });
+
+  it("regime: risk_on when bull + neutral", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce(bullKline)
+      .mockResolvedValueOnce(neutralTickers);
+
+    const result = await handleGetMarketRegime(client);
+    expect(result.regime).toBe("risk_on");
+  });
+
+  it("regime: risk_off when bear + neutral", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce(bearKline)
+      .mockResolvedValueOnce(neutralTickers);
+
+    const result = await handleGetMarketRegime(client);
+    expect(result.regime).toBe("risk_off");
+  });
+
+  it("regime: choppy when btcTrend is choppy", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce(choppyKline)
+      .mockResolvedValueOnce(neutralTickers);
+
+    const result = await handleGetMarketRegime(client);
+    expect(result.regime).toBe("choppy");
+  });
+
+  it("topFundingSymbols: top 5 by abs(fundingRate), volume >= 10M only", async () => {
+    const client = new MockClient("k", "s", "u");
+    const tickers = makeTickers([
+      { symbol: "HIGHFUND", fundingRate: "0.005", turnover24h: "50000000" },
+      { symbol: "LOWVOL",   fundingRate: "0.009", turnover24h: "5000000" },   // excluded: vol < 10M
+      { symbol: "MID1",     fundingRate: "0.003", turnover24h: "20000000" },
+      { symbol: "MID2",     fundingRate: "-0.004", turnover24h: "20000000" },
+      { symbol: "MID3",     fundingRate: "0.002", turnover24h: "20000000" },
+      { symbol: "MID4",     fundingRate: "-0.001", turnover24h: "20000000" },
+      { symbol: "MID5",     fundingRate: "0.0005", turnover24h: "20000000" }, // 6th — excluded
+    ]);
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce(bullKline)
+      .mockResolvedValueOnce(tickers);
+
+    const result = await handleGetMarketRegime(client);
+
+    expect(result.topFundingSymbols).toHaveLength(5);
+    expect(result.topFundingSymbols[0].symbol).toBe("HIGHFUND");
+    expect(result.topFundingSymbols.find((s) => s.symbol === "LOWVOL")).toBeUndefined();
+  });
+
+  it("topFundingSymbols excludes tickers with volume < 10M even if funding extreme", async () => {
+    const client = new MockClient("k", "s", "u");
+    const tickers = makeTickers([
+      { symbol: "EXTREME", fundingRate: "0.01", turnover24h: "1000000" }, // excluded
+      ...Array(5).fill(null).map((_, i) => ({
+        symbol: `OK${i}`,
+        fundingRate: "0.001",
+        turnover24h: "50000000",
+      })),
+    ]);
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce(bullKline)
+      .mockResolvedValueOnce(tickers);
+
+    const result = await handleGetMarketRegime(client);
+    expect(result.topFundingSymbols.find((s) => s.symbol === "EXTREME")).toBeUndefined();
+  });
+
+  it("topFundingSymbols side: long_pays_short when positive, short_pays_long when negative", async () => {
+    const client = new MockClient("k", "s", "u");
+    const tickers = makeTickers([
+      { symbol: "POSITIVE", fundingRate: "0.001", turnover24h: "50000000" },
+      { symbol: "NEGATIVE", fundingRate: "-0.001", turnover24h: "50000000" },
+      ...Array(18).fill(null).map((_, i) => ({
+        symbol: `PAD${i}`,
+        fundingRate: "0.0001",
+        turnover24h: "50000000",
+      })),
+    ]);
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce(bullKline)
+      .mockResolvedValueOnce(tickers);
+
+    const result = await handleGetMarketRegime(client);
+    const pos = result.topFundingSymbols.find((s) => s.symbol === "POSITIVE");
+    const neg = result.topFundingSymbols.find((s) => s.symbol === "NEGATIVE");
+    expect(pos?.side).toBe("long_pays_short");
+    expect(neg?.side).toBe("short_pays_long");
+  });
+
+  it("skips tickers with NaN fundingRate in median calculation", async () => {
+    const client = new MockClient("k", "s", "u");
+    const tickers = makeTickers([
+      ...Array(19).fill(null).map((_, i) => ({
+        symbol: `SYM${i}`,
+        fundingRate: "0.001",
+        turnover24h: "50000000",
+      })),
+      { symbol: "BROKEN", fundingRate: "not-a-number", turnover24h: "50000000" },
+    ]);
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce(bullKline)
+      .mockResolvedValueOnce(tickers);
+
+    const result = await handleGetMarketRegime(client);
+    expect(result.fundingSentiment).toBe("long_heavy"); // 0.001 > 0.0005
+  });
+
+  it("handles ticker list shorter than 20 without error", async () => {
+    const client = new MockClient("k", "s", "u");
+    const fewTickers = makeTickers([
+      { symbol: "BTC", fundingRate: "0.0001", turnover24h: "500000000" },
+      { symbol: "ETH", fundingRate: "0.0002", turnover24h: "200000000" },
+    ]);
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce(bullKline)
+      .mockResolvedValueOnce(fewTickers);
+
+    await expect(handleGetMarketRegime(client)).resolves.toBeDefined();
+  });
+
+  it("throws with informative message when BTC kline has fewer than 20 bars", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce({ list: Array(10).fill(["1700000000000", "30000", "30100", "29900", "30000", "100", "3000000"]) })
+      .mockResolvedValueOnce(neutralTickers);
+
+    await expect(handleGetMarketRegime(client)).rejects.toThrow("Insufficient BTC kline data for SMA computation (got 10 bars, need 20)");
+  });
+
+  it("result includes timestamp ISO string", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce(bullKline)
+      .mockResolvedValueOnce(neutralTickers);
+
+    const result = await handleGetMarketRegime(client);
+    expect(result.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+  });
+
+  it("result timeframe field matches param", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce(bullKline)
+      .mockResolvedValueOnce(neutralTickers);
+
+    const result = await handleGetMarketRegime(client, "macro");
+    expect(result.timeframe).toBe("macro");
+  });
+
+  it("timeframe=macro passes interval D to kline API", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce(bullKline)
+      .mockResolvedValueOnce(neutralTickers);
+
+    await handleGetMarketRegime(client, "macro");
+
+    expect(client.publicGet).toHaveBeenCalledWith("/v5/market/kline", expect.objectContaining({ interval: "D" }));
   });
 });
