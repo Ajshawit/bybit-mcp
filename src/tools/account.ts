@@ -70,8 +70,8 @@ export async function handleGetAccountStatus(client: BybitClient): Promise<Accou
     .map((c) => ({
       coin: c.coin,
       balance: c.walletBalance,
-      usdValue: (c as any).usdValue ?? "0",
-      usdValueAvailable: (c as any).usdValue != null,
+      usdValue: c.usdValue ?? "0",
+      usdValueAvailable: c.usdValue != null,
     }));
 
   return {

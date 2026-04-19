@@ -5,6 +5,7 @@ export interface WalletBalanceCoin {
   unrealisedPnl: string;
   equity: string;
   locked: string;
+  usdValue?: string;
 }
 
 export interface WalletBalanceAccount {
