@@ -21,12 +21,11 @@ const makeTicker = (symbol: string, iv: string) => ({
   underlyingPrice: "95000",
 });
 
-// BTC chain: near expiry ATM call, far expiry ATM call, one put at same near expiry
 const mockBtcChain = {
   list: [
-    makeTicker("BTC-25APR26-95000-C-USDT", "0.60"),  // near, ATM call
-    makeTicker("BTC-25APR26-95000-P-USDT", "0.70"),  // near, ATM put → skew = 0.70 - 0.60 = 0.10
-    makeTicker("BTC-30JUN26-95000-C-USDT", "0.65"),  // far ATM call (near=0.60 < far=0.65 → contango)
+    makeTicker("BTC-25APR26-95000-C-USDT", "0.60"),
+    makeTicker("BTC-25APR26-95000-P-USDT", "0.70"),
+    makeTicker("BTC-30JUN26-95000-C-USDT", "0.65"),
   ],
   category: "option",
 };
@@ -58,7 +57,6 @@ describe("handleGetOptionsRegime", () => {
     (client.publicGet as jest.Mock).mockResolvedValue(mockBtcChain);
 
     const result = await handleGetOptionsRegime(client, store, { underlying: ["BTC"] });
-    // put IV = 0.70, call IV = 0.60, skew = 0.10
     expect(Math.abs(result.signals["BTC"].putCallSkew - 0.10)).toBeLessThan(0.01);
   });
 
