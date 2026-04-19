@@ -6,7 +6,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { BybitClient } from "./client";
 import { handleGetAccountStatus } from "./tools/account";
-import { handleGetMarketData, handleScanMarket, ScanFilter } from "./tools/market";
+import { handleGetMarketData, handleScanMarket, handleGetOhlc, ScanFilter } from "./tools/market";
 import { handlePlaceTrade, handleClosePosition, handleManagePosition } from "./tools/trade";
 
 const apiKey = process.env.BYBIT_API_KEY;
@@ -57,6 +57,33 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           limit: { type: "number", description: "Maximum results to return. Default: 15" },
         },
         required: ["filter"],
+      },
+    },
+    {
+      name: "get_ohlc",
+      description: "Fetch raw OHLC candles for any symbol and category. Returns candles newest-first; candles[0] is the most recent bar and its close is exposed as lastPrice. Use for swing level identification, stop placement reference, and blue-chip context (e.g. BTCUSDT spot or BTCUSD inverse). Returns empty candles array (not an error) if Bybit returns no data for the requested range.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          symbol: { type: "string", description: "e.g. BTCUSDT, BTCUSD, ETHUSDT" },
+          category: {
+            type: "string",
+            enum: ["linear", "inverse", "spot"],
+            description: "Default: linear",
+          },
+          interval: {
+            type: "string",
+            enum: ["1", "3", "5", "15", "30", "60", "120", "240", "360", "720", "D", "W", "M"],
+            description: "Candle interval. Default: 60 (1 hour)",
+          },
+          limit: {
+            type: "number",
+            minimum: 1,
+            maximum: 1000,
+            description: "Number of candles to return. Default: 100",
+          },
+        },
+        required: ["symbol"],
       },
     },
     {
@@ -173,6 +200,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           a.limit as number | undefined
         );
         result = { results: data, serverTimestamp: new Date().toISOString() };
+        break;
+      }
+
+      case "get_ohlc": {
+        const data = await handleGetOhlc(
+          client,
+          a.symbol as string,
+          a.category as "linear" | "inverse" | "spot" | undefined,
+          a.interval as string | undefined,
+          a.limit as number | undefined
+        );
+        result = data;
         break;
       }
 
