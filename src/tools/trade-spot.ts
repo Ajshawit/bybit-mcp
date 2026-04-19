@@ -117,6 +117,7 @@ export async function handleCloseSpot(
   params: CloseSpotParams
 ): Promise<SpotCloseResult> {
   const { symbol, percent = 100, qty: explicitQty, notes } = params;
+  // Only supports USDT-quoted spot symbols (e.g. BTCUSDT → BTC). Non-USDT quotes are out of scope.
   const baseCoin = symbol.replace(/USDT$/, "");
 
   const [inst, walletRes] = await Promise.all([

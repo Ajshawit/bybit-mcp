@@ -107,7 +107,7 @@ export interface InstrumentInfoResult {
       minOrderQty: string;
     };
     priceFilter: { tickSize: string };
-    minNotionalValue: string;
+    minNotionalValue?: string;
   }>;
 }
 

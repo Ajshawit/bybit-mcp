@@ -179,10 +179,11 @@ export async function handleClosePerp(
 ): Promise<ClosePositionResult> {
   const { symbol, side, category = "linear", percent = 100, qty: explicitQty, notes } = params;
 
-  const [positionIdx, inst] = await Promise.all([
+  const [positionIdxInit, inst] = await Promise.all([
     detectPositionIdx(client, category, symbol, side),
     ensureInstrumentInfo(client, category, symbol),
   ]);
+  let positionIdx = positionIdxInit;
 
   const posRes = await client.signedGet<{ list: Array<{ size: string; positionIdx: number }> }>(
     "/v5/position/list",
@@ -216,6 +217,7 @@ export async function handleClosePerp(
       try {
         orderRes = await client.signedPost<OrderCreateResult>("/v5/order/create", orderBody);
         positionModeCache.set(category, symbol, side, hedgeIdx);
+        positionIdx = hedgeIdx;
       } catch {
         throw new Error("Position mode mismatch that auto-retry could not resolve. Check your account's position mode setting on Bybit.");
       }
