@@ -26,7 +26,7 @@ export function handleGetOptionPayoff(params: PayoffParams): PayoffResult {
   const parsed = legs.map((leg) => ({ leg, parsed: parseOptionSymbol(leg.symbol) }));
   const underlying = parsed[0].parsed.underlying;
 
-  const actualSteps = steps === 1 ? 1 : Math.max(steps, 2);
+  const actualSteps = Math.max(steps, 1);
   const pricePoints: OptionPayoffPoint[] = [];
 
   for (let i = 0; i < actualSteps; i++) {
@@ -51,7 +51,6 @@ export function handleGetOptionPayoff(params: PayoffParams): PayoffResult {
   const maxLoss = Math.min(...pnls);
   const maxPnlInRange = Math.max(...pnls);
 
-  // Detect unbounded profit: PnL still increasing at upper boundary
   const trendingUpAtTop = pricePoints.length >= 2 &&
     pricePoints[pricePoints.length - 1].pnl > pricePoints[pricePoints.length - 2].pnl;
   // Detect unbounded loss: PnL still decreasing at upper boundary (short call)
@@ -61,7 +60,6 @@ export function handleGetOptionPayoff(params: PayoffParams): PayoffResult {
   const maxProfit: number | "unlimited" = trendingUpAtTop ? "unlimited" : maxPnlInRange;
   const cappedAtRange = trendingUpAtTop || trendingDownAtTop || undefined;
 
-  // Breakevens: price points where PnL crosses zero (linear interpolation)
   const breakevens: number[] = [];
   for (let i = 1; i < pricePoints.length; i++) {
     const prev = pricePoints[i - 1];
