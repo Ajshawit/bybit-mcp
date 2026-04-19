@@ -1,4 +1,7 @@
-import { handlePlaceOptionTrade, PlaceOptionTradeResult, OptionDryRunResult } from "../../tools/options/trade";
+import {
+  handlePlaceOptionTrade, PlaceOptionTradeResult, OptionDryRunResult,
+  handleCloseOptionPosition, CloseOptionResult, OptionCloseDryRunResult,
+} from "../../tools/options/trade";
 import { BybitClient } from "../../client";
 
 jest.mock("../../client");
@@ -203,5 +206,138 @@ describe("handlePlaceOptionTrade", () => {
         // no price
       })
     ).rejects.toThrow("price is required for Limit orders");
+  });
+});
+
+const CLOSE_SYMBOL = "BTC-25APR28-80000-C-USDT";
+
+const mockLongPosition = {
+  list: [{
+    symbol: CLOSE_SYMBOL,
+    side: "Buy" as const,
+    size: "2",
+    avgPrice: "1000",
+    markPrice: "1200",
+  }],
+};
+
+const mockShortPosition = {
+  list: [{
+    symbol: CLOSE_SYMBOL,
+    side: "Sell" as const,
+    size: "1",
+    avgPrice: "1000",
+    markPrice: "900",
+  }],
+};
+
+const mockCloseOrderResult = { orderId: "close-order-1", orderLinkId: "mcp-close-abc" };
+
+describe("handleCloseOptionPosition", () => {
+  it("11. throws when no open position found", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.signedGet as jest.Mock).mockResolvedValueOnce({ list: [] });
+
+    await expect(
+      handleCloseOptionPosition(client, {
+        symbol: CLOSE_SYMBOL,
+        orderType: "Market",
+      })
+    ).rejects.toThrow(`No open option position found for ${CLOSE_SYMBOL}`);
+  });
+
+  it("12. close qty exceeding position size throws", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.signedGet as jest.Mock).mockResolvedValueOnce(mockLongPosition); // size=2
+
+    await expect(
+      handleCloseOptionPosition(client, {
+        symbol: CLOSE_SYMBOL,
+        qty: 5, // exceeds position size of 2
+        orderType: "Market",
+      })
+    ).rejects.toThrow("Close qty 5 exceeds position size 2");
+  });
+
+  it("13. dry_run=true returns OptionCloseDryRunResult with correct estimatedPnl for long and serverTimestamp", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.signedGet as jest.Mock).mockResolvedValueOnce(mockLongPosition);
+    (client.publicGet as jest.Mock).mockResolvedValueOnce(mockTicker); // bid=1100, ask=1200
+
+    const result = await handleCloseOptionPosition(client, {
+      symbol: CLOSE_SYMBOL,
+      orderType: "Market",
+      dry_run: true,
+    });
+
+    expect(result.dryRun).toBe(true);
+    // Long closes at bid (1100). entryPremium = 1000×2×1 = 2000. estimatedPremium = 1100×2×1 = 2200.
+    // estimatedPnl = 2200 − 2000 = 200
+    expect((result as OptionCloseDryRunResult).estimatedPnl).toBe(200);
+    expect(result.serverTimestamp).toBeDefined();
+  });
+
+  it("14. dry_run=true returns correct estimatedPnl for short", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.signedGet as jest.Mock).mockResolvedValueOnce(mockShortPosition);
+    (client.publicGet as jest.Mock).mockResolvedValueOnce(mockTicker); // bid=1100, ask=1200
+
+    const result = await handleCloseOptionPosition(client, {
+      symbol: CLOSE_SYMBOL,
+      orderType: "Market",
+      dry_run: true,
+    });
+
+    expect(result.dryRun).toBe(true);
+    // Short closes at ask (1200). entryPremium = 1000×1×1 = 1000. estimatedPremium = 1200×1×1 = 1200.
+    // estimatedPnl = 1000 − 1200 = −200
+    expect((result as OptionCloseDryRunResult).estimatedPnl).toBe(-200);
+  });
+
+  it("15. close qty defaults to full position size when qty not provided", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.signedGet as jest.Mock).mockResolvedValueOnce(mockLongPosition); // size=2
+    (client.publicGet as jest.Mock).mockResolvedValueOnce(mockTicker);
+    (client.signedPost as jest.Mock).mockResolvedValueOnce(mockCloseOrderResult);
+
+    const result = await handleCloseOptionPosition(client, {
+      symbol: CLOSE_SYMBOL,
+      orderType: "Market",
+    });
+
+    expect((result as CloseOptionResult).closedQty).toBe(2);
+    expect((result as CloseOptionResult).remainingQty).toBe(0);
+  });
+
+  it("16. live close submits with reduceOnly: true and opposite side", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.signedGet as jest.Mock).mockResolvedValueOnce(mockLongPosition); // Long → close with Sell
+    (client.publicGet as jest.Mock).mockResolvedValueOnce(mockTicker);
+    (client.signedPost as jest.Mock).mockResolvedValueOnce(mockCloseOrderResult);
+
+    await handleCloseOptionPosition(client, {
+      symbol: CLOSE_SYMBOL,
+      orderType: "Market",
+    });
+
+    const body = (client.signedPost as jest.Mock).mock.calls[0][1];
+    expect(body.reduceOnly).toBe(true);
+    expect(body.side).toBe("Sell"); // Long position → Sell to close
+  });
+
+  it("17. remainingQty computed correctly for partial close", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.signedGet as jest.Mock).mockResolvedValueOnce(mockLongPosition); // size=2
+    (client.publicGet as jest.Mock).mockResolvedValueOnce(mockTicker);
+    (client.signedPost as jest.Mock).mockResolvedValueOnce(mockCloseOrderResult);
+
+    const result = await handleCloseOptionPosition(client, {
+      symbol: CLOSE_SYMBOL,
+      qty: 1,
+      orderType: "Market",
+    });
+
+    expect((result as CloseOptionResult).closedQty).toBe(1);
+    expect((result as CloseOptionResult).remainingQty).toBe(1);
   });
 });

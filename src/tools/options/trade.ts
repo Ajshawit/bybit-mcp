@@ -53,6 +53,7 @@ export interface CloseOptionPositionParams {
 }
 
 export interface CloseOptionResult {
+  dryRun?: false;
   orderId: string;
   orderLinkId: string;
   symbol: string;
@@ -211,8 +212,83 @@ export async function handlePlaceOptionTrade(
 }
 
 export async function handleCloseOptionPosition(
-  _client: BybitClient,
-  _params: CloseOptionPositionParams
+  client: BybitClient,
+  params: CloseOptionPositionParams
 ): Promise<CloseOptionResult | OptionCloseDryRunResult> {
-  throw new Error("not implemented");
+  const { symbol, qty, orderType, price, notes, dry_run } = params;
+
+  if (orderType === "Limit" && price == null) {
+    throw new Error("price is required for Limit orders");
+  }
+
+  const posRes = await client.signedGet<PositionResult>("/v5/position/list", {
+    category: "option",
+    symbol,
+  });
+  const pos = posRes.list.find((p) => parseFloat(p.size) > 0);
+  if (!pos) {
+    throw new Error(`No open option position found for ${symbol}`);
+  }
+  const currentSide: "Long" | "Short" = pos.side === "Buy" ? "Long" : "Short";
+  const posSize = parseFloat(pos.size);
+  const closeQty = qty ?? posSize;
+  if (closeQty > posSize) {
+    throw new Error(`Close qty ${closeQty} exceeds position size ${posSize}`);
+  }
+
+  const tickerRes = await client.publicGet<OptionTickersResult>("/v5/market/tickers", {
+    category: "option",
+    symbol,
+  });
+  const t = tickerRes.list[0];
+  const bid1Price = parseFloat(t.bid1Price);
+  const ask1Price = parseFloat(t.ask1Price);
+  const estimatedFillPrice = currentSide === "Long" ? bid1Price : ask1Price;
+
+  const parsed = parseOptionSymbol(symbol);
+  const multiplier = OPTION_MULTIPLIERS[parsed.underlying] ?? 1;
+
+  if (dry_run) {
+    const entryPremium = parseFloat(pos.avgPrice) * closeQty * multiplier;
+    const estimatedPremium = estimatedFillPrice * closeQty * multiplier;
+    const estimatedPnl = currentSide === "Long"
+      ? estimatedPremium - entryPremium
+      : entryPremium - estimatedPremium;
+    const warnings: string[] = [];
+    if (ask1Price > 0 && (ask1Price - bid1Price) / ask1Price > 0.1) {
+      warnings.push(`Wide bid-ask spread: bid ${bid1Price}, ask ${ask1Price}`);
+    }
+    return {
+      dryRun: true,
+      symbol, currentSide, currentQty: posSize, closeQty,
+      estimatedFillPrice, estimatedPremium, estimatedPnl,
+      warnings, wouldSubmit: true,
+      serverTimestamp: new Date().toISOString(),
+    };
+  }
+
+  const closeSide = currentSide === "Long" ? "Sell" : "Buy";
+  const nonce = crypto.randomBytes(3).toString("hex");
+  const orderBody: Record<string, unknown> = {
+    category: "option",
+    symbol, side: closeSide, orderType,
+    qty: String(closeQty),
+    reduceOnly: true,
+    orderLinkId: `mcp-${Date.now()}-${nonce}`,
+  };
+  if (orderType === "Limit" && price != null) {
+    orderBody.price = String(price);
+  }
+
+  const orderRes = await client.signedPost<OrderCreateResult>("/v5/order/create", orderBody);
+
+  return {
+    orderId: orderRes.orderId,
+    orderLinkId: orderRes.orderLinkId,
+    symbol,
+    closedQty: closeQty,
+    remainingQty: posSize - closeQty,
+    notes,
+    serverTimestamp: new Date().toISOString(),
+  };
 }
