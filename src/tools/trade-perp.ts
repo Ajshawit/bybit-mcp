@@ -70,9 +70,7 @@ export async function handlePlacePerp(
   const rawQty = category === "inverse"
     ? margin * leverage * execPrice
     : (margin * leverage) / execPrice;
-  const qtyFloored = floorToStep(rawQty, inst.qtyStep);
-  // Use raw qty string for orders so precision differences (e.g. market vs limit price) are preserved
-  const qty = String(rawQty);
+  const qty = floorToStep(rawQty, inst.qtyStep);
 
   const notional = category === "inverse" ? rawQty : rawQty * execPrice;
   const minNotional = parseFloat(inst.minNotionalValue);
@@ -90,7 +88,7 @@ export async function handlePlacePerp(
     if (pct > 20) warnings.push(`Order uses ${pct.toFixed(0)}% of free ${marginCoin} balance (${freeBalance.toFixed(4)} ${marginCoin})`);
     return {
       dryRun: true, category, symbol, side, orderType,
-      computedQty: qtyFloored, executionPrice: String(execPrice),
+      computedQty: qty, executionPrice: String(execPrice),
       notional: notional.toFixed(2), effectiveLeverage: leverage,
       estimatedLiqPrice: estimatedLiqPrice.toFixed(2), liqPriceApproximate: true,
       marginCoin, marginRequired: String(margin),
@@ -119,7 +117,7 @@ export async function handlePlacePerp(
   try {
     orderRes = await client.signedPost<OrderCreateResult>("/v5/order/create", orderBody);
   } catch (err: unknown) {
-    if (err instanceof BybitError && positionIdx === 0) {
+    if (err instanceof BybitError && err.retCode === 10001 && positionIdx === 0) {
       const hedgeIdx: 0 | 1 | 2 = side === "Buy" ? 1 : 2;
       orderBody.positionIdx = hedgeIdx;
       try {
@@ -137,7 +135,7 @@ export async function handlePlacePerp(
   const result: PlaceTradeResult = {
     orderId: orderRes!.orderId,
     orderLinkId: orderRes!.orderLinkId,
-    filledQty: qtyFloored,
+    filledQty: qty,
     avgFillPrice: marketPrice,
     notes,
   };
@@ -210,7 +208,7 @@ export async function handleClosePerp(
   try {
     orderRes = await client.signedPost<OrderCreateResult>("/v5/order/create", orderBody);
   } catch (err: unknown) {
-    if (err instanceof BybitError && positionIdx === 0) {
+    if (err instanceof BybitError && err.retCode === 10001 && positionIdx === 0) {
       const hedgeIdx: 0 | 1 | 2 = side === "Buy" ? 1 : 2;
       orderBody.positionIdx = hedgeIdx;
       try {

@@ -2,7 +2,18 @@ import { handlePlacePerp, handleClosePerp, handleManagePosition } from "../tools
 import { BybitClient, BybitError } from "../client";
 import { positionModeCache } from "../cache";
 
-jest.mock("../client");
+jest.mock("../client", () => {
+  const actual = jest.requireActual<typeof import("../client")>("../client");
+  return {
+    ...actual,
+    BybitClient: jest.fn().mockImplementation(() => ({
+      publicGet: jest.fn(),
+      signedGet: jest.fn(),
+      signedPost: jest.fn(),
+    })),
+    BybitError: actual.BybitError,
+  };
+});
 jest.mock("../tools/trade-shared");
 
 import { ensureInstrumentInfo, detectPositionIdx } from "../tools/trade-shared";
@@ -96,8 +107,8 @@ describe("handlePlacePerp", () => {
     const orderCall = (client.signedPost as jest.Mock).mock.calls[1];
     expect(orderCall[1].orderType).toBe("Limit");
     expect(orderCall[1].price).toBe("29500");
-    // qty uses limit price: 30 * 10 / 29500 ≈ 0.01016...
-    expect(parseFloat(orderCall[1].qty)).toBeGreaterThan(0.01);
+    // qty = floor(30 * 10 / 29500, 0.001) = floor(0.01017, 0.001) = 0.010
+    expect(parseFloat(orderCall[1].qty)).toBeCloseTo(0.010, 3);
   });
 
   it("returns DryRunResult without submitting when dry_run=true", async () => {
