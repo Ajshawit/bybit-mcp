@@ -26,9 +26,10 @@ export function parseOptionSymbol(symbol: string): ParsedOptionSymbol {
   const [underlying, expiryStr, strikeStr, typeChar] = parts;
   const day = parseInt(expiryStr.slice(0, 2));
   const monthStr = expiryStr.slice(2, 5).toUpperCase();
-  const year = 2000 + parseInt(expiryStr.slice(5));
+  const yearStr = expiryStr.slice(5);
+  const year = 2000 + parseInt(yearStr);
 
-  if (isNaN(day) || !(monthStr in MONTHS) || isNaN(year)) {
+  if (isNaN(day) || !(monthStr in MONTHS) || !/^\d{2}$/.test(yearStr)) {
     throw new Error(`Invalid option symbol format. Expected ASSET-EXPIRY-STRIKE-C|P-USDT, got: ${symbol}`);
   }
 
@@ -95,7 +96,7 @@ export interface OptionPosition {
   qty: number;
   entryPrice: number;
   markPrice: number;
-  premiumPaid: number;
+  premiumPaid: number;     // positive = premium paid (long), negative = credit received (short)
   currentValue: number;
   unrealisedPnl: number;
   unrealisedPnlPct: number;
