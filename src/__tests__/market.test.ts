@@ -643,7 +643,7 @@ describe("handleGetMarketRegime", () => {
       .mockResolvedValueOnce({ list: Array(10).fill(["1700000000000", "30000", "30100", "29900", "30000", "100", "3000000"]) })
       .mockResolvedValueOnce(neutralTickers);
 
-    await expect(handleGetMarketRegime(client)).rejects.toThrow("Insufficient BTC kline data for SMA computation (got 10 bars, need 20)");
+    await expect(handleGetMarketRegime(client)).rejects.toThrow("Insufficient BTC kline data for SMA computation (got 10 bars, need 50)");
   });
 
   it("result includes timestamp ISO string", async () => {

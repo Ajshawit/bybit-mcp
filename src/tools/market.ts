@@ -260,15 +260,15 @@ export async function handleGetMarketRegime(
   ]);
 
   const bars = klineRes.list ?? [];
-  if (bars.length < 20) {
+  if (bars.length < 50) {
     throw new Error(
-      `Insufficient BTC kline data for SMA computation (got ${bars.length} bars, need 20)`
+      `Insufficient BTC kline data for SMA computation (got ${bars.length} bars, need 50)`
     );
   }
 
   // Reverse from newest-first to oldest-first for MA computation
   const closes = bars.map((b) => parseFloat(b[4])).reverse();
-  const sma50 = closes.reduce((s, v) => s + v, 0) / closes.length;
+  const sma50 = closes.reduce((s, v) => s + v, 0) / 50;
   const sma20 = closes.slice(-20).reduce((s, v) => s + v, 0) / 20;
   const btcPrice = closes[closes.length - 1];
 

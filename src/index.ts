@@ -226,7 +226,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           a.interval as string | undefined,
           a.limit as number | undefined
         );
-        result = data;
+        result = { ...data, serverTimestamp: new Date().toISOString() };
         break;
       }
 
@@ -235,7 +235,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           client,
           a.timeframe as "intraday" | "swing" | "macro" | undefined
         );
-        result = data;
+        result = { ...data, serverTimestamp: new Date().toISOString() };
         break;
       }
 
