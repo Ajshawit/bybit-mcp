@@ -1,13 +1,65 @@
 {
-  "name": "bybit-mcp",
-  "version": "1.0.0",
-  "description": "Bybit V5 MCP server for Claude Desktop",
+  "name": "ajs-bybit-mcp",
+  "version": "0.1.0",
+  "description": "Bybit MCP server for Claude Desktop, Claude Code, and Cursor. Trade Bybit V5 linear/inverse perpetuals, spot, and options with Greeks, IV scanning, market regime detection, OI divergence scanning, and confirmation-based safety rails.",
   "main": "dist/index.js",
+  "bin": {
+    "ajs-bybit-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "bybit",
+    "bybit-api",
+    "bybit-v5",
+    "crypto",
+    "cryptocurrency",
+    "crypto-trading",
+    "trading",
+    "trading-bot",
+    "algorithmic-trading",
+    "systematic-trading",
+    "perpetual-futures",
+    "perpetuals",
+    "futures",
+    "options",
+    "options-trading",
+    "crypto-options",
+    "derivatives",
+    "claude",
+    "claude-desktop",
+    "claude-code",
+    "cursor",
+    "ai-trading",
+    "ai-agent",
+    "typescript"
+  ],
+  "author": "Ajshawit",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ajshawit/bybit-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Ajshawit/bybit-mcp/issues"
+  },
+  "homepage": "https://github.com/Ajshawit/bybit-mcp#readme",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && chmod +x dist/index.js",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
     "test": "jest",
     "test:watch": "jest --watch",
-    "dev": "tsc --watch"
+    "prepublishOnly": "npm run build && npm test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0"
