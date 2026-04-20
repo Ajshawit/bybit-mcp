@@ -82,10 +82,16 @@ export async function handleScanOptions(
 ): Promise<ScanOptionsResult> {
   const { underlying, filter, limit = 10 } = params;
 
-  const chainRes = await client.publicGet<OptionTickersResult>("/v5/market/tickers", {
-    category: "option",
-    baseCoin: underlying,
-  });
+  const [chainRes, spotPrice] = await Promise.all([
+    client.publicGet<OptionTickersResult>("/v5/market/tickers", {
+      category: "option",
+      baseCoin: underlying,
+    }),
+    client.publicGet<{ list: Array<{ lastPrice: string }> }>("/v5/market/tickers", {
+      category: "spot",
+      symbol: `${underlying}USDT`,
+    }).then((r) => parseFloat(r.list[0]?.lastPrice ?? "0")).catch(() => 0),
+  ]);
 
   for (const t of chainRes.list) {
     const iv = parseFloat(t.markIv);
@@ -99,7 +105,7 @@ export async function handleScanOptions(
   const pctAvailable = remaining === null;
   const warmupRemaining = remaining ?? undefined;
 
-  const spot = parseFloat(chainRes.list.find((t) => t.underlyingPrice)?.underlyingPrice ?? "0");
+  const spot = spotPrice;
 
   const enriched = chainRes.list.flatMap((t) => {
     let parsed: ReturnType<typeof parseOptionSymbol>;

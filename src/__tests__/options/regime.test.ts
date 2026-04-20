@@ -30,11 +30,19 @@ const mockBtcChain = {
   category: "option",
 };
 
+const mockSpotTicker = { list: [{ lastPrice: "95000" }] };
+
+function mockPublicGet(data: object) {
+  return jest.fn((_path: string, params: Record<string, string>) =>
+    Promise.resolve(params.category === "spot" ? mockSpotTicker : data)
+  );
+}
+
 describe("handleGetOptionsRegime", () => {
   it("returns signals for requested underlyings", async () => {
     const client = new MockClient("k", "s", "u");
     const store = new IVSampleStore();
-    (client.publicGet as jest.Mock).mockResolvedValue(mockBtcChain);
+    (client.publicGet as jest.Mock).mockImplementation(mockPublicGet(mockBtcChain));
 
     const result = await handleGetOptionsRegime(client, store, { underlying: ["BTC"] });
 
@@ -45,7 +53,7 @@ describe("handleGetOptionsRegime", () => {
   it("identifies contango when near IV < far IV", async () => {
     const client = new MockClient("k", "s", "u");
     const store = new IVSampleStore();
-    (client.publicGet as jest.Mock).mockResolvedValue(mockBtcChain);
+    (client.publicGet as jest.Mock).mockImplementation(mockPublicGet(mockBtcChain));
 
     const result = await handleGetOptionsRegime(client, store, { underlying: ["BTC"] });
     expect(result.signals["BTC"].termStructure).toBe("contango");
@@ -54,7 +62,7 @@ describe("handleGetOptionsRegime", () => {
   it("computes putCallSkew as put IV minus call IV at same expiry", async () => {
     const client = new MockClient("k", "s", "u");
     const store = new IVSampleStore();
-    (client.publicGet as jest.Mock).mockResolvedValue(mockBtcChain);
+    (client.publicGet as jest.Mock).mockImplementation(mockPublicGet(mockBtcChain));
 
     const result = await handleGetOptionsRegime(client, store, { underlying: ["BTC"] });
     expect(Math.abs(result.signals["BTC"].putCallSkew - 0.10)).toBeLessThan(0.01);
@@ -63,7 +71,7 @@ describe("handleGetOptionsRegime", () => {
   it("sampleAvailable=false before warmup", async () => {
     const client = new MockClient("k", "s", "u");
     const store = new IVSampleStore();
-    (client.publicGet as jest.Mock).mockResolvedValue(mockBtcChain);
+    (client.publicGet as jest.Mock).mockImplementation(mockPublicGet(mockBtcChain));
 
     const result = await handleGetOptionsRegime(client, store, { underlying: ["BTC"] });
     expect(result.signals["BTC"].sampleAvailable).toBe(false);
@@ -73,7 +81,7 @@ describe("handleGetOptionsRegime", () => {
   it("queries all three underlyings by default", async () => {
     const client = new MockClient("k", "s", "u");
     const store = new IVSampleStore();
-    (client.publicGet as jest.Mock).mockResolvedValue(mockBtcChain);
+    (client.publicGet as jest.Mock).mockImplementation(mockPublicGet(mockBtcChain));
 
     await handleGetOptionsRegime(client, store, {});
 

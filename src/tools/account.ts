@@ -75,7 +75,7 @@ function mapOptionPositions(list: BybitOptionPosition[]): OptionPosition[] {
       const unrealisedPnlPct = premiumFlow !== 0
         ? (unrealisedPnl / Math.abs(premiumFlow)) * 100
         : 0;
-      const realisedPnl = parseFloat(pos.cumRealisedPnl ?? "0");
+      const realisedPnl = parseFloat(pos.cumRealisedPnl || "0");
       const totalPnl = unrealisedPnl + realisedPnl;
       const daysToExpiry = Math.max(0, Math.ceil((parsed.expiry.getTime() - Date.now()) / 86400000));
       const breakeven = parsed.type === "call"

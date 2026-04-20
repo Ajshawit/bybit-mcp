@@ -58,14 +58,24 @@ export async function handleGetOptionsRegime(
   const underlyings = params.underlying ?? (["BTC", "ETH", "SOL"] as const);
   const now = Date.now();
 
-  const chains = await Promise.all(
-    underlyings.map((u) =>
-      client.publicGet<OptionTickersResult>("/v5/market/tickers", {
-        category: "option",
-        baseCoin: u,
-      })
-    )
-  );
+  const [chains, spotPrices] = await Promise.all([
+    Promise.all(
+      underlyings.map((u) =>
+        client.publicGet<OptionTickersResult>("/v5/market/tickers", {
+          category: "option",
+          baseCoin: u,
+        })
+      )
+    ),
+    Promise.all(
+      underlyings.map((u) =>
+        client.publicGet<{ list: Array<{ lastPrice: string }> }>("/v5/market/tickers", {
+          category: "spot",
+          symbol: `${u}USDT`,
+        }).then((r) => parseFloat(r.list[0]?.lastPrice ?? "0")).catch(() => 0)
+      )
+    ),
+  ]);
 
   const signals: Record<string, OptionsRegimeSignal> = {};
 
@@ -74,7 +84,7 @@ export async function handleGetOptionsRegime(
     const list = chains[i].list;
     if (list.length === 0) continue;
 
-    const spot = parseFloat(list.find((t) => t.underlyingPrice)?.underlyingPrice ?? "0");
+    const spot = spotPrices[i];
 
     const nearCallIv = findAtmIv(list, spot, "call", TARGET_DAYS_NEAR, now);
     const nearPutIv = findAtmIv(list, spot, "put", TARGET_DAYS_NEAR, now);
