@@ -1,0 +1,64 @@
+# Smithery configuration: https://smithery.ai/docs/config#smitheryyaml
+
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    required:
+      - bybitApiKey
+      - bybitApiSecret
+    properties:
+      bybitApiKey:
+        type: string
+        title: Bybit API Key
+        description: >
+          Your Bybit V5 API key. Use a testnet key for first-time setup.
+          Required permissions are Read and Trade. Never enable Withdrawal or Transfer.
+      bybitApiSecret:
+        type: string
+        title: Bybit API Secret
+        description: Your Bybit V5 API secret paired with the API key above.
+      bybitTestnet:
+        type: boolean
+        title: Use Testnet
+        description: >
+          Route requests to testnet.bybit.com. Strongly recommended for first-time setup
+          until you understand exactly what every tool does.
+        default: true
+      enableOptions:
+        type: boolean
+        title: Enable Options Tools
+        description: >
+          Enable the 4 options tools (options_market, get_option_payoff,
+          place_option_trade, close_option_position). Options settle in USDC.
+        default: false
+      optionsAllowNakedShort:
+        type: boolean
+        title: Allow Naked Short Options
+        description: >
+          Allow selling options without an offsetting long position.
+          Naked shorts carry unlimited or very large maximum loss. Leave false unless you
+          have explicit reason to enable.
+        default: false
+      optionsMaxPremiumPctBalance:
+        type: number
+        title: Max Option Premium (% of USDC balance)
+        description: >
+          Block option buys where premium exceeds N% of USDC balance. Leave empty to disable.
+        minimum: 0
+        maximum: 100
+  commandFunction: |-
+    (config) => ({
+      command: 'npx',
+      args: ['-y', 'ajs-bybit-mcp'],
+      env: {
+        BYBIT_API_KEY: config.bybitApiKey,
+        BYBIT_API_SECRET: config.bybitApiSecret,
+        BYBIT_TESTNET: String(config.bybitTestnet ?? true),
+        ENABLE_OPTIONS: String(config.enableOptions ?? false),
+        OPTIONS_ALLOW_NAKED_SHORT: String(config.optionsAllowNakedShort ?? false),
+        ...(config.optionsMaxPremiumPctBalance !== undefined && {
+          OPTIONS_MAX_PREMIUM_PCT_BALANCE: String(config.optionsMaxPremiumPctBalance)
+        })
+      }
+    })
