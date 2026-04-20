@@ -161,7 +161,7 @@ export async function handlePlaceOptionTrade(
   }
 
   if (dry_run) {
-    const daysToExpiry = Math.max(0, Math.ceil((parsed.expiry.getTime() - Date.now()) / 86400000));
+    const daysToExpiry = Math.max(0, Math.round((parsed.expiry.getTime() - Date.now()) / 86400000));
     const thetaPerDay = qty * Math.abs(greeks.theta) * multiplier;
     const payoffResult = handleGetOptionPayoff({
       legs: [{ symbol, side, qty, premium: estimatedFillPrice }],
