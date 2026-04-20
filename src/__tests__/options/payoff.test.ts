@@ -84,15 +84,15 @@ describe("handleGetOptionPayoff", () => {
     expect(result.summary.cappedAtRange).toBe(true);
   });
 
-  it("ETH uses 0.1 multiplier", () => {
+  it("ETH uses multiplier=1 (1 contract = 1 ETH)", () => {
     const result = handleGetOptionPayoff({
       legs: [{ symbol: "ETH-30MAY26-2000-C-USDT", side: "Buy", qty: 1, premium: 100 }],
       currentSpot: 2000,
       underlyingPriceRange: { min: 3000, max: 3000 },
       steps: 1,
     });
-    // At spot=3000: intrinsic=1000, pnl=(1000-100)*1*0.1 = 90
-    expect(result.pricePoints[0].pnl).toBeCloseTo(90);
+    // At spot=3000: intrinsic=1000, pnl=(1000-100)*1*1 = 900
+    expect(result.pricePoints[0].pnl).toBeCloseTo(900);
   });
 
   it("uses default ±30% range from currentSpot when range not provided", () => {

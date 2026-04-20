@@ -1,6 +1,6 @@
 export const OPTION_MULTIPLIERS: Record<string, number> = {
   BTC: 1,
-  ETH: 0.1,
+  ETH: 1,  // 1 contract = 1 ETH; confirmed via instruments-info lotSizeFilter
   SOL: 1,
 };
 
@@ -100,6 +100,8 @@ export interface OptionPosition {
   currentValue: number;
   unrealisedPnl: number;
   unrealisedPnlPct: number;
+  realisedPnl: number;     // cumulative realised P&L (entry fees, partial closes)
+  totalPnl: number;        // unrealisedPnl + realisedPnl
   greeks: { delta: number; gamma: number; theta: number; vega: number };
   daysToExpiry: number;
   breakeven: number;
@@ -111,6 +113,7 @@ export interface BybitOptionPosition {
   size: string;
   avgPrice: string;
   markPrice: string;
+  cumRealisedPnl?: string;
   delta?: string;
   gamma?: string;
   theta?: string;

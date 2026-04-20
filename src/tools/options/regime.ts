@@ -74,7 +74,7 @@ export async function handleGetOptionsRegime(
     const list = chains[i].list;
     if (list.length === 0) continue;
 
-    const spot = parseFloat(list[0].underlyingPrice ?? "0");
+    const spot = parseFloat(list.find((t) => t.underlyingPrice)?.underlyingPrice ?? "0");
 
     const nearCallIv = findAtmIv(list, spot, "call", TARGET_DAYS_NEAR, now);
     const nearPutIv = findAtmIv(list, spot, "put", TARGET_DAYS_NEAR, now);

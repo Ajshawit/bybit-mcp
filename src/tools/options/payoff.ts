@@ -60,13 +60,21 @@ export function handleGetOptionPayoff(params: PayoffParams): PayoffResult {
   const maxProfit: number | "unlimited" = trendingUpAtTop ? "unlimited" : maxPnlInRange;
   const cappedAtRange = trendingUpAtTop || trendingDownAtTop || undefined;
 
-  const breakevens: number[] = [];
-  for (let i = 1; i < pricePoints.length; i++) {
-    const prev = pricePoints[i - 1];
-    const curr = pricePoints[i];
-    if ((prev.pnl < 0 && curr.pnl >= 0) || (prev.pnl > 0 && curr.pnl <= 0)) {
-      const t = -prev.pnl / (curr.pnl - prev.pnl);
-      breakevens.push(prev.underlyingPrice + t * (curr.underlyingPrice - prev.underlyingPrice));
+  // Single-leg: use closed-form breakeven to avoid interpolation error
+  // Multi-leg: interpolate across price points (no closed form in general)
+  let breakevens: number[];
+  if (parsed.length === 1) {
+    const { leg, parsed: p } = parsed[0];
+    breakevens = [p.type === "call" ? p.strike + leg.premium : p.strike - leg.premium];
+  } else {
+    breakevens = [];
+    for (let i = 1; i < pricePoints.length; i++) {
+      const prev = pricePoints[i - 1];
+      const curr = pricePoints[i];
+      if ((prev.pnl < 0 && curr.pnl >= 0) || (prev.pnl > 0 && curr.pnl <= 0)) {
+        const t = -prev.pnl / (curr.pnl - prev.pnl);
+        breakevens.push(prev.underlyingPrice + t * (curr.underlyingPrice - prev.underlyingPrice));
+      }
     }
   }
 

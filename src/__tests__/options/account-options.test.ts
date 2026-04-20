@@ -72,13 +72,16 @@ describe("handleGetAccountStatus — option_positions", () => {
     expect(result.option_positions).toHaveLength(0);
   });
 
-  it("21. OptionPosition fields computed correctly: premiumFlow, currentValue, unrealisedPnl, breakeven for long call", async () => {
+  it("21. OptionPosition fields computed correctly: premiumFlow, currentValue, unrealisedPnl, breakeven, realisedPnl, totalPnl for long call", async () => {
     const client = new MockClient("key", "secret", "url");
+    const mockLongCallWithRealised = {
+      list: [{ ...mockLongCallPos.list[0], cumRealisedPnl: "-0.70" }],
+    };
     (client.signedGet as jest.Mock)
       .mockResolvedValueOnce(mockWalletBalance)
       .mockResolvedValueOnce(emptyPositions)
       .mockResolvedValueOnce(emptyPositions)
-      .mockResolvedValueOnce(mockLongCallPos);
+      .mockResolvedValueOnce(mockLongCallWithRealised);
 
     const result = await handleGetAccountStatus(client, true);
     const pos = result.option_positions[0];
@@ -92,6 +95,25 @@ describe("handleGetAccountStatus — option_positions", () => {
     expect(pos.unrealisedPnl).toBe(400);
     // breakeven = 80000 + |2000| / (2 × 1) = 80000 + 1000 = 81000
     expect(pos.breakeven).toBe(81000);
+    // realisedPnl from cumRealisedPnl
+    expect(pos.realisedPnl).toBe(-0.70);
+    // totalPnl = unrealisedPnl + realisedPnl = 400 + (-0.70) = 399.30
+    expect(pos.totalPnl).toBeCloseTo(399.30);
+  });
+
+  it("21b. realisedPnl defaults to 0 when cumRealisedPnl absent", async () => {
+    const client = new MockClient("key", "secret", "url");
+    (client.signedGet as jest.Mock)
+      .mockResolvedValueOnce(mockWalletBalance)
+      .mockResolvedValueOnce(emptyPositions)
+      .mockResolvedValueOnce(emptyPositions)
+      .mockResolvedValueOnce(mockLongCallPos);
+
+    const result = await handleGetAccountStatus(client, true);
+    const pos = result.option_positions[0];
+
+    expect(pos.realisedPnl).toBe(0);
+    expect(pos.totalPnl).toBe(pos.unrealisedPnl);
   });
 
   it("22. premiumFlow is negative for short positions (credit received)", async () => {

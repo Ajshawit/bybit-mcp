@@ -1,9 +1,9 @@
 import { parseOptionSymbol, computeMoneyness, OPTION_MULTIPLIERS } from "../../tools/options/types";
 
 describe("OPTION_MULTIPLIERS", () => {
-  it("BTC=1, ETH=0.1, SOL=1", () => {
+  it("BTC=1, ETH=1, SOL=1", () => {
     expect(OPTION_MULTIPLIERS["BTC"]).toBe(1);
-    expect(OPTION_MULTIPLIERS["ETH"]).toBe(0.1);
+    expect(OPTION_MULTIPLIERS["ETH"]).toBe(1);  // 1 contract = 1 ETH; confirmed via Bybit instruments-info
     expect(OPTION_MULTIPLIERS["SOL"]).toBe(1);
   });
 });

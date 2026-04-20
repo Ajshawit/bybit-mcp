@@ -194,6 +194,24 @@ describe("handlePlaceOptionTrade", () => {
     });
   });
 
+  it("7b. ETH multiplier=1: insufficient USDC check uses correct premium (not 10x wrong)", async () => {
+    const ETH_SYMBOL = "ETH-24APR26-2400-C-USDT";
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValueOnce({
+      list: [{ symbol: ETH_SYMBOL, bid1Price: "44", ask1Price: "45", markPrice: "44.5",
+               markIv: "0.8", delta: "0.45", gamma: "0.01", theta: "-1", vega: "10",
+               underlyingPrice: "2400" }],
+    });
+    (client.signedGet as jest.Mock).mockResolvedValueOnce({
+      list: [{ coin: [{ coin: "USDC", walletBalance: "9.94" }] }], // enough for 0.1 ETH but not 1 ETH
+    });
+
+    // With multiplier=1: estimatedPremium = 1 × 45 × 1 = 45 USDC > 9.94 → should throw
+    await expect(
+      handlePlaceOptionTrade(client, { symbol: ETH_SYMBOL, side: "Buy", qty: 1, orderType: "Market" })
+    ).rejects.toThrow("Insufficient USDC: need 45");
+  });
+
   it("10. limit order without price throws", async () => {
     const client = new MockClient("k", "s", "u");
 
