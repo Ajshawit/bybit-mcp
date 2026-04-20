@@ -43,7 +43,8 @@ export interface OIDivergenceResult {
   oi4hPct: number;
   oiValueUsd: number;
   volume24hUsd: number;
-  reading: "short_covering" | "new_shorts";
+  reading: "short_covering" | "new_shorts" | "long_accumulation" | "oi_divergence";
+  fundingRate: number;
 }
 
 export interface CrowdedPositioningResult {
@@ -378,10 +379,17 @@ async function scanOiDivergence(
       const priceDown = price24hPct < 0;
       const oiUp = oi24hPct > 0;
 
-      let reading: "short_covering" | "new_shorts" | null = null;
-      if (priceUp && oiDown) reading = "short_covering";
-      else if (priceDown && oiUp) reading = "new_shorts";
-      else return null;
+      const fundingRate = parseFloat(t.fundingRate);
+      const FUNDING_NEUTRAL = 0.0001;
+
+      let reading: OIDivergenceResult["reading"] | null = null;
+      if (priceUp && oiDown) {
+        reading = "short_covering";
+      } else if (priceDown && oiUp) {
+        if (fundingRate < -FUNDING_NEUTRAL) reading = "new_shorts";
+        else if (fundingRate > FUNDING_NEUTRAL) reading = "long_accumulation";
+        else reading = "oi_divergence";
+      } else return null;
 
       const klineRes = await client.publicGet<KlineResult>("/v5/market/kline", {
         category: "linear",
@@ -402,6 +410,7 @@ async function scanOiDivergence(
         oi4hPct,
         oiValueUsd: parseFloat(t.openInterestValue),
         volume24hUsd: parseFloat(t.turnover24h),
+        fundingRate,
         reading,
       } as OIDivergenceResult;
     } catch {

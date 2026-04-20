@@ -19,7 +19,7 @@ const MAINNET_URL = "https://api.bybit.com";
 const TESTNET_URL = "https://api-testnet.bybit.com";
 
 function createServer(apiKey: string, apiSecret: string, enableOptions: boolean): Server {
-  const baseUrl = process.env.BYBIT_TESTNET === "true" ? TESTNET_URL : MAINNET_URL;
+  const baseUrl = process.env.BYBIT_TESTNET !== "false" ? TESTNET_URL : MAINNET_URL;
   const client = new BybitClient(apiKey, apiSecret, baseUrl);
   const ENABLE_OPTIONS = enableOptions;
   const ivStore = ENABLE_OPTIONS ? new IVSampleStore() : null;
@@ -349,8 +349,8 @@ function createServer(apiKey: string, apiSecret: string, enableOptions: boolean)
           break;
         }
 
-        case "place_trade":
-          result = await handlePlaceTrade(client, {
+        case "place_trade": {
+          const tradeData = await handlePlaceTrade(client, {
             symbol: a.symbol as string,
             side: a.side as "Buy" | "Sell",
             margin: a.margin as number,
@@ -365,10 +365,12 @@ function createServer(apiKey: string, apiSecret: string, enableOptions: boolean)
             notes: a.notes as string | undefined,
             dry_run: a.dry_run as boolean | undefined,
           });
+          result = { ...tradeData, serverTimestamp: new Date().toISOString() };
           break;
+        }
 
-        case "close_position": {
-          const data = await handleClosePosition(client, {
+        case "close_position":
+          result = await handleClosePosition(client, {
             symbol: a.symbol as string,
             side: a.side as "Buy" | "Sell",
             category: a.category as "linear" | "inverse" | "spot" | "spot_margin" | undefined,
@@ -376,21 +378,17 @@ function createServer(apiKey: string, apiSecret: string, enableOptions: boolean)
             qty: a.qty as number | undefined,
             notes: a.notes as string | undefined,
           });
-          result = { ...data, serverTimestamp: new Date().toISOString() };
           break;
-        }
 
-        case "manage_position": {
-          const data = await handleManagePosition(client, {
+        case "manage_position":
+          result = await handleManagePosition(client, {
             symbol: a.symbol as string,
             side: a.side as "Buy" | "Sell",
             category: a.category as "linear" | "inverse" | undefined,
             updates: a.updates as { sl?: number; tp?: number; trailingStop?: number; trailingActivatePrice?: number },
             notes: a.notes as string | undefined,
           });
-          result = { ...data, serverTimestamp: new Date().toISOString() };
           break;
-        }
 
         case "options_market": {
           if (!ivStore) throw new Error("Options module not enabled");
@@ -505,7 +503,12 @@ if (require.main === module) {
   async function main() {
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    console.error("Bybit MCP server running on stdio");
+    const isTestnet = process.env.BYBIT_TESTNET !== "false";
+    if (isTestnet) {
+      console.error("[bybit-mcp] Connecting to Bybit TESTNET (api-testnet.bybit.com)");
+    } else {
+      console.error("[bybit-mcp] ⚠ Connecting to Bybit MAINNET (api.bybit.com) — real funds at risk");
+    }
   }
 
   main().catch((err) => {

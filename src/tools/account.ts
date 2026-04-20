@@ -16,7 +16,7 @@ export interface AccountPosition {
   sl: number | null;
   tp: number | null;
   trailingStop: number;
-  liquidationPrice: number;
+  liquidationPrice: number | null;
   positionIdx: 0 | 1 | 2;
 }
 
@@ -49,7 +49,7 @@ function mapPositions(list: PositionListResult["list"]): AccountPosition[] {
         sl: p.stopLoss ? parseFloat(p.stopLoss) : null,
         tp: p.takeProfit ? parseFloat(p.takeProfit) : null,
         trailingStop: parseFloat(p.trailingStop || "0"),
-        liquidationPrice: parseFloat(p.liquidationPrice),
+        liquidationPrice: (() => { const v = parseFloat(p.liquidationPrice); return v > 0 ? v : null; })(),
         positionIdx: p.positionIdx,
       };
     });
@@ -77,7 +77,7 @@ function mapOptionPositions(list: BybitOptionPosition[]): OptionPosition[] {
         : 0;
       const realisedPnl = parseFloat(pos.cumRealisedPnl || "0");
       const totalPnl = unrealisedPnl + realisedPnl;
-      const daysToExpiry = Math.max(0, Math.ceil((parsed.expiry.getTime() - Date.now()) / 86400000));
+      const daysToExpiry = Math.max(0, Math.round((parsed.expiry.getTime() - Date.now()) / 86400000));
       const breakeven = parsed.type === "call"
         ? parsed.strike + Math.abs(premiumFlow) / (qty * multiplier)
         : parsed.strike - Math.abs(premiumFlow) / (qty * multiplier);

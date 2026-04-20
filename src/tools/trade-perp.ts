@@ -97,7 +97,7 @@ export async function handlePlacePerp(
       wouldSubmit: margin <= freeBalance
         && parseFloat(qty) > 0
         && (minNotional === 0 || notional >= minNotional),
-      timestamp: new Date().toISOString(),
+      serverTimestamp: new Date().toISOString(),
     };
   }
 
@@ -149,9 +149,10 @@ export async function handlePlacePerp(
   const result: PlaceTradeResult = {
     orderId: orderRes!.orderId,
     orderLinkId: orderRes!.orderLinkId,
+    symbol,
     filledQty: qty,
     avgFillPrice: execPrice,
-    timestamp: new Date().toISOString(),
+    serverTimestamp: new Date().toISOString(),
     notes,
   };
 
@@ -242,9 +243,10 @@ export async function handleClosePerp(
   return {
     orderId: orderRes!.orderId,
     orderLinkId: orderRes!.orderLinkId,
+    symbol,
     closedQty: closeQty,
     remainingSize: remaining,
-    timestamp: new Date().toISOString(),
+    serverTimestamp: new Date().toISOString(),
     notes,
   };
 }
@@ -265,7 +267,7 @@ export interface ManagePositionParams {
 export async function handleManagePosition(
   client: BybitClient,
   params: ManagePositionParams
-): Promise<{ updated: boolean; timestamp: string; notes?: string }> {
+): Promise<{ updated: boolean; symbol: string; serverTimestamp: string; notes?: string }> {
   const { symbol, side, category = "linear", updates, notes } = params;
 
   if (category === "spot" || category === "spot_margin") {
@@ -281,5 +283,5 @@ export async function handleManagePosition(
   if (updates.trailingActivatePrice != null) body.activePrice = String(updates.trailingActivatePrice);
 
   await client.signedPost("/v5/position/trading-stop", body);
-  return { updated: true, timestamp: new Date().toISOString(), notes };
+  return { updated: true, symbol, serverTimestamp: new Date().toISOString(), notes };
 }
