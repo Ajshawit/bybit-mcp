@@ -88,7 +88,7 @@ export async function handleScanOptions(
       baseCoin: underlying,
     }),
     client.publicGet<{ list: Array<{ lastPrice: string }> }>("/v5/market/tickers", {
-      category: "spot",
+      category: "linear",
       symbol: `${underlying}USDT`,
     }).then((r) => parseFloat(r.list[0]?.lastPrice ?? "0")).catch(() => 0),
   ]);
@@ -128,9 +128,9 @@ export async function handleScanOptions(
 
   let sorted: typeof enriched;
   if (filter === "high_iv" || filter === "low_iv") {
-    // Exclude deep OTM smile tails — constrain to ±40% of spot when spot is available
+    // Exclude deep OTM smile tails — constrain to ±20% of spot when spot is available
     const nearSpot = spot > 0
-      ? enriched.filter((c) => Math.abs(c.strike - spot) / spot <= 0.4)
+      ? enriched.filter((c) => Math.abs(c.strike - spot) / spot <= 0.2)
       : enriched;
     if (filter === "high_iv") {
       sorted = nearSpot

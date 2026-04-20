@@ -70,7 +70,7 @@ export async function handleGetOptionsRegime(
     Promise.all(
       underlyings.map((u) =>
         client.publicGet<{ list: Array<{ lastPrice: string }> }>("/v5/market/tickers", {
-          category: "spot",
+          category: "linear",
           symbol: `${u}USDT`,
         }).then((r) => parseFloat(r.list[0]?.lastPrice ?? "0")).catch(() => 0)
       )

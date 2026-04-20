@@ -34,7 +34,7 @@ const mockSpotTicker = { list: [{ lastPrice: "95000" }] };
 
 function mockPublicGet(data: object) {
   return jest.fn((_path: string, params: Record<string, string>) =>
-    Promise.resolve(params.category === "spot" ? mockSpotTicker : data)
+    Promise.resolve(params.category === "linear" ? mockSpotTicker : data)
   );
 }
 
