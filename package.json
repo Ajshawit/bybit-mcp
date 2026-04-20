@@ -1,6 +1,6 @@
 {
   "name": "ajs-bybit-mcp",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Bybit MCP server for Claude Desktop, Claude Code, and Cursor. Trade Bybit V5 linear/inverse perpetuals, spot, and options with Greeks, IV scanning, market regime detection, OI divergence scanning, and confirmation-based safety rails.",
   "main": "dist/index.js",
   "bin": {
