@@ -1,14 +1,40 @@
-# bybit-mcp
+# Bybit MCP Server
 
-A Model Context Protocol (MCP) server that connects AI agents to the Bybit V5 REST API. Trade linear/inverse perps, spot, and options on Bybit directly from Claude Desktop conversations.
+**Bybit V5 trading for Claude Desktop, Claude Code, and Cursor.** Linear and inverse perpetuals, spot, and options with Greeks, IV scanning, market regime detection, OI divergence scanning, and confirmation-based safety rails.
+
+[![npm version](https://img.shields.io/npm/v/ajs-bybit-mcp.svg?color=blue)](https://www.npmjs.com/package/ajs-bybit-mcp)
+[![npm downloads](https://img.shields.io/npm/dm/ajs-bybit-mcp.svg)](https://www.npmjs.com/package/ajs-bybit-mcp)
+[![smithery badge](https://smithery.ai/badge/ajs-bybit-mcp)](https://smithery.ai/server/ajs-bybit-mcp)
+[![tests](https://img.shields.io/badge/tests-196%20passing-brightgreen)](./src)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 > **This MCP allows AI models to execute real trades with real money on Bybit. Models make mistakes. Markets move fast. You are the only safeguard between a bad model decision and your account. Use a testnet API key until you understand exactly what every tool does.**
 
 ---
 
+## Why this one
+
+There are several Bybit MCPs. Most are thin V5 REST wrappers with one tool per endpoint, no analytics, and no options support. This one is built for traders making actual decisions, not just querying the API.
+
+| | `ajs-bybit-mcp` (this repo) | Typical Bybit MCP |
+|---|---|---|
+| **Options trading** | Full stack: chains, Greeks, IV scanning, skew and term structure, payoff math, safe place/close | Not supported |
+| **Market analytics** | Regime detection (risk_on / risk_off / choppy), OI divergence scan, crowded positioning scan, volume spike scan | Individual endpoint queries |
+| **Account view** | Single `get_account_status` call: balance, margin in use, unrealised PnL, and all positions across perps, spot, and options | Multiple calls for wallet, positions, orders |
+| **Consolidated market data** | `get_market_data` returns price, funding, OI, klines, and top-20 orderbook in one call | One endpoint per data type |
+| **Execution safety** | `CONFIRM` required on every execution tool + `dry_run` preview on every order | None beyond testnet default |
+| **Options safety** | Naked short blocked by default, partial-short detection, premium % of balance guard | N/A |
+| **Test coverage** | 196 tests across 19 suites | Usually unstated |
+| **Scope** | Trading decisions | Bybit V5 CRUD |
+
+If you want "what's the price of BTC" and a place-order endpoint, the other Bybit MCPs will do fine. If you want a toolkit for real trading workflow — regime views, positioning scans, options flow, safe execution — use this one.
+
+---
+
 ## Scope
 
-This is a Bybit API wrapper for AI agents with confirmation-based safety rails. It exposes Bybit's trading functionality cleanly to any MCP-compatible model.
+Bybit V5 API for AI agents, with confirmation-based safety rails. Exposes Bybit's trading functionality cleanly to any MCP-compatible model (Claude Desktop, Claude Code, Cursor, or any client that speaks MCP over stdio).
 
 **This is not** a trading bot, strategy framework, backtesting tool, or multi-exchange aggregator. If you want different behaviour, fork it.
 
@@ -59,16 +85,7 @@ Create an API key at [Bybit API Management](https://www.bybit.com/app/user/api-m
 
 For testnet keys, use [Bybit Testnet](https://testnet.bybit.com/app/user/api-management).
 
-### 2. Install & build
-
-```bash
-git clone https://github.com/Ajshawit/bybit-mcp.git
-cd bybit-mcp
-npm install
-npm run build
-```
-
-### 3. Configure Claude Desktop
+### 2. Configure Claude Desktop
 
 Add to your Claude Desktop config file:
 
@@ -82,8 +99,8 @@ Add to your Claude Desktop config file:
 {
   "mcpServers": {
     "bybit": {
-      "command": "node",
-      "args": ["/absolute/path/to/bybit-mcp/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "ajs-bybit-mcp"],
       "env": {
         "BYBIT_API_KEY": "your_api_key",
         "BYBIT_API_SECRET": "your_api_secret",
@@ -97,6 +114,17 @@ Add to your Claude Desktop config file:
 Start with `BYBIT_TESTNET=true`. Remove it or set to `false` only after you are comfortable with how the tools behave.
 
 Restart Claude Desktop after saving.
+
+### Install from source (contributors)
+
+```bash
+git clone https://github.com/Ajshawit/bybit-mcp.git
+cd bybit-mcp
+npm install
+npm run build
+```
+
+Then use `node /absolute/path/to/bybit-mcp/dist/index.js` instead of `npx ajs-bybit-mcp` in the config above.
 
 ---
 
