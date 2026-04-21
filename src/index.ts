@@ -45,7 +45,8 @@ function createServer(apiKey: string, apiSecret: string, enableOptions: boolean)
             symbol: { type: "string", description: "Symbol e.g. BTCUSDT" },
             klineIntervals: { type: "array", items: { type: "string" }, description: "Kline intervals e.g. [\"60\",\"240\"]. Default: [\"60\",\"240\"]" },
             klineLimit: { type: "number", description: "Number of candles per interval. Default: 24" },
-            fundingHistoryLimit: { type: "number", description: "Number of funding rate history records. Default: 16" },
+            fundingHistoryLimit: { type: "number", description: "Number of funding rate history records. Default: 8" },
+            includeOrderbook: { type: "boolean", description: "If true, include full 20-level bids/asks arrays in the orderbook field. Default: false (returns 5-field summary only: bestBid, bestAsk, spread, spreadPct, midPrice)." },
           },
           required: ["symbol"],
         },
@@ -206,6 +207,7 @@ function createServer(apiKey: string, apiSecret: string, enableOptions: boolean)
               filter: { type: "string", enum: ["high_iv", "low_iv", "skew", "high_oi_change"], description: "For scan" },
               expiry: { type: "string", enum: ["weekly", "monthly", "all"], description: "For scan. Default: all" },
               limit: { type: "number", description: "For scan. Default: 10" },
+              compact: { type: "boolean", description: "For chain: return minimal fields only (symbol, strike, expiry, daysToExpiry, type, bid, ask, iv, openInterest). Default: false" },
             },
             required: ["action"],
             allOf: [
@@ -249,7 +251,7 @@ function createServer(apiKey: string, apiSecret: string, enableOptions: boolean)
                 properties: { min: { type: "number" }, max: { type: "number" } },
                 required: ["min", "max"],
               },
-              steps: { type: "number", description: "Price points to compute. Default: 50" },
+              steps: { type: "number", description: "Price points to compute. Default: 15" },
             },
             required: ["legs", "currentSpot"],
           },
@@ -311,7 +313,8 @@ function createServer(apiKey: string, apiSecret: string, enableOptions: boolean)
             a.symbol as string,
             a.klineIntervals as string[] | undefined,
             a.klineLimit as number | undefined,
-            a.fundingHistoryLimit as number | undefined
+            a.fundingHistoryLimit as number | undefined,
+            a.includeOrderbook as boolean | undefined
           );
           result = { ...data, serverTimestamp: new Date().toISOString() };
           break;
@@ -401,6 +404,7 @@ function createServer(apiKey: string, apiSecret: string, enableOptions: boolean)
               type: a.type as "call" | "put" | undefined,
               minOpenInterest: a.minOpenInterest as number | undefined,
               strikeRange: a.strikeRange as { minPctFromSpot: number; maxPctFromSpot: number } | undefined,
+              compact: a.compact as boolean | undefined,
             });
             result = { ...data, serverTimestamp: new Date().toISOString() };
           } else if (action === "quote") {

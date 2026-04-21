@@ -102,7 +102,7 @@ describe("handleGetOptionPayoff", () => {
     });
     expect(result.pricePoints[0].underlyingPrice).toBeCloseTo(35000, -2);
     expect(result.pricePoints[result.pricePoints.length - 1].underlyingPrice).toBeCloseTo(65000, -2);
-    expect(result.pricePoints.length).toBe(50);
+    expect(result.pricePoints.length).toBe(15);
   });
 
   it("result includes underlying field parsed from leg symbol", () => {

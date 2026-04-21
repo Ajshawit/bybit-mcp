@@ -61,7 +61,9 @@ describe("handleGetMarketData", () => {
     expect(result.ticker.fundingRate).toBe(0.0001);
     expect(result.fundingHistory).toHaveLength(2);
     expect(result.klines["60"]).toHaveLength(2);
-    expect(result.orderbook.bids).toHaveLength(2);
+    expect(result.orderbook.bestBid).toBe(29999);
+    expect(result.orderbook.bestAsk).toBe(30001);
+    expect(result.orderbook.bids).toBeUndefined();
   });
 
   it("uses default intervals [60, 240] and klineLimit 24", async () => {
@@ -286,7 +288,6 @@ describe("handleGetOhlc", () => {
       low: 29900,
       close: 30050,
       volume: 100,
-      turnover: 3005000,
     });
   });
 

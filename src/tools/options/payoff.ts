@@ -19,7 +19,7 @@ export interface PayoffResult {
 }
 
 export function handleGetOptionPayoff(params: PayoffParams): PayoffResult {
-  const { legs, currentSpot, steps = 50 } = params;
+  const { legs, currentSpot, steps = 15 } = params;
   const min = params.underlyingPriceRange?.min ?? currentSpot * 0.7;
   const max = params.underlyingPriceRange?.max ?? currentSpot * 1.3;
 

@@ -25,7 +25,8 @@ There are several Bybit MCPs. Most are thin V5 REST wrappers with one tool per e
 | **Consolidated market data** | `get_market_data` returns price, funding, OI, klines, and top-20 orderbook in one call | One endpoint per data type |
 | **Execution safety** | `CONFIRM` required on every execution tool + `dry_run` preview on every order | None beyond testnet default |
 | **Options safety** | Naked short blocked by default, partial-short detection, premium % of balance guard | N/A |
-| **Test coverage** | 196 tests across 19 suites | Usually unstated |
+| **Token efficiency** | Compact responses by default: orderbook summary (5 fields) instead of 20-level arrays, rounded numerics, optional chain compact mode | Full arrays, raw floats |
+| **Test coverage** | 198 tests across 19 suites | Usually unstated |
 | **Scope** | Trading decisions | Bybit V5 CRUD |
 
 If you want "what's the price of BTC" and a place-order endpoint, the other Bybit MCPs will do fine. If you want a toolkit for real trading workflow — regime views, positioning scans, options flow, safe execution — use this one.
@@ -47,7 +48,7 @@ Bybit V5 API for AI agents, with confirmation-based safety rails. Exposes Bybit'
 | Tool | Description |
 |------|-------------|
 | `get_account_status` | Balance, free capital, margin in use, unrealised PnL, and all open positions (perps, spot, options) |
-| `get_market_data` | Price, funding rate, open interest, klines, and top-20 orderbook for a single linear perp |
+| `get_market_data` | Price, funding rate, open interest, klines, and orderbook summary (or full depth with `includeOrderbook=true`) for a single linear perp |
 | `get_market_regime` | BTC trend + aggregate funding sentiment across top-20 perps - returns `risk_on` / `risk_off` / `choppy` |
 | `scan_market` | Scan all linear perps for OI divergence, crowded positioning, or volume spikes |
 | `get_ohlc` | Raw OHLC candles for any symbol and category |

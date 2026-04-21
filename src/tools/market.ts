@@ -31,7 +31,6 @@ export interface MarketKlineBar {
   low: number;
   close: number;
   volume: number;
-  turnover: number;
 }
 
 export interface OIDivergenceResult {
@@ -75,7 +74,15 @@ export interface MarketDataResult {
   ticker: MarketTicker;
   klines: Record<string, MarketKlineBar[]>;
   fundingHistory: Array<{ rate: number; timestamp: number }>;
-  orderbook: { bids: [number, number][]; asks: [number, number][] };
+  orderbook: {
+    bestBid: number;
+    bestAsk: number;
+    spread: number;
+    spreadPct: number;
+    midPrice: number;
+    bids?: [number, number][];
+    asks?: [number, number][];
+  };
 }
 
 export interface OhlcResult {
@@ -91,7 +98,8 @@ export async function handleGetMarketData(
   symbol: string,
   klineIntervals = ["60", "240"],
   klineLimit = 24,
-  fundingHistoryLimit = 16
+  fundingHistoryLimit = 8,
+  includeOrderbook = false
 ): Promise<MarketDataResult> {
   const allResults = await Promise.all([
     client.publicGet<TickersResult>("/v5/market/tickers", { category: "linear", symbol }),
@@ -150,14 +158,13 @@ export async function handleGetMarketData(
   const klines: Record<string, MarketKlineBar[]> = {};
   klineIntervals.forEach((interval, i) => {
     klines[interval] = (klineResults[i]?.list ?? []).map(
-      ([time, open, high, low, close, volume, turnover]) => ({
+      ([time, open, high, low, close, volume]) => ({
         time: parseInt(time),
         open: parseFloat(open),
         high: parseFloat(high),
         low: parseFloat(low),
         close: parseFloat(close),
         volume: parseFloat(volume),
-        turnover: parseFloat(turnover),
       })
     );
   });
@@ -167,10 +174,16 @@ export async function handleGetMarketData(
     timestamp: parseInt(f.fundingRateTimestamp),
   }));
 
-  const orderbook = {
-    bids: (obRes.b ?? []).map(([p, s]) => [parseFloat(p), parseFloat(s)] as [number, number]),
-    asks: (obRes.a ?? []).map(([p, s]) => [parseFloat(p), parseFloat(s)] as [number, number]),
-  };
+  const bids = (obRes.b ?? []).map(([p, s]) => [parseFloat(p), parseFloat(s)] as [number, number]);
+  const asks = (obRes.a ?? []).map(([p, s]) => [parseFloat(p), parseFloat(s)] as [number, number]);
+  const bestBid = bids[0]?.[0] ?? 0;
+  const bestAsk = asks[0]?.[0] ?? 0;
+  const midPrice = bestBid > 0 && bestAsk > 0 ? (bestBid + bestAsk) / 2 : 0;
+  const spread = bestAsk - bestBid;
+  const spreadPct = midPrice > 0 ? spread / midPrice * 100 : 0;
+  const orderbook = includeOrderbook
+    ? { bestBid, bestAsk, spread, spreadPct, midPrice, bids, asks }
+    : { bestBid, bestAsk, spread, spreadPct, midPrice };
 
   return { ticker, klines, fundingHistory, orderbook };
 }
@@ -190,14 +203,13 @@ export async function handleGetOhlc(
   });
 
   const candles: MarketKlineBar[] = (res.list ?? []).map(
-    ([time, open, high, low, close, volume, turnover]) => ({
+    ([time, open, high, low, close, volume]) => ({
       time: parseInt(time),
       open: parseFloat(open),
       high: parseFloat(high),
       low: parseFloat(low),
       close: parseFloat(close),
       volume: parseFloat(volume),
-      turnover: parseFloat(turnover),
     })
   );
 
@@ -323,6 +335,9 @@ export async function handleGetMarketRegime(
 
 export type ScanFilter = "oi_divergence" | "crowded_positioning" | "volume_spike";
 
+const r2 = (v: number) => Math.round(v * 100) / 100;
+const ri = (v: number) => Math.round(v);
+
 export async function handleScanMarket(
   client: BybitClient,
   filter: ScanFilter,
@@ -403,13 +418,13 @@ async function scanOiDivergence(
 
       return {
         symbol: t.symbol,
-        price: parseFloat(t.lastPrice),
-        price24hPct,
-        price4hPct,
-        oi24hPct,
-        oi4hPct,
-        oiValueUsd: parseFloat(t.openInterestValue),
-        volume24hUsd: parseFloat(t.turnover24h),
+        price: ri(parseFloat(t.lastPrice)),
+        price24hPct: r2(price24hPct),
+        price4hPct: r2(price4hPct),
+        oi24hPct: r2(oi24hPct),
+        oi4hPct: r2(oi4hPct),
+        oiValueUsd: ri(parseFloat(t.openInterestValue)),
+        volume24hUsd: ri(parseFloat(t.turnover24h)),
         fundingRate,
         reading,
       } as OIDivergenceResult;
@@ -467,14 +482,14 @@ async function scanCrowdedPositioning(
 
       return {
         symbol: t.symbol,
-        price,
+        price: ri(price),
         fundingRate: funding,
-        fundingRateAnnualized: funding * 3 * 365 * 100,
+        fundingRateAnnualized: r2(funding * 3 * 365 * 100),
         funding8hAgo: fl[1] ? parseFloat(fl[1].fundingRate) : null,
         funding24hAgo: fl[3] ? parseFloat(fl[3].fundingRate) : null,
-        rangePosition: rangePos,
-        price24hPct: parseFloat(t.price24hPcnt) * 100,
-        volume24hUsd: parseFloat(t.turnover24h),
+        rangePosition: r2(rangePos),
+        price24hPct: r2(parseFloat(t.price24hPcnt) * 100),
+        volume24hUsd: ri(parseFloat(t.turnover24h)),
         reading,
       } as CrowdedPositioningResult;
     } catch {
@@ -532,12 +547,12 @@ async function scanVolumeSpike(
 
       return {
         symbol: t.symbol,
-        price: parseFloat(t.lastPrice),
-        hourChangePct,
-        currentHourVolumeUsd: currentHourVol,
-        avg24hHourlyVolumeUsd: avgPriorVol,
-        spikeRatio,
-        price24hPct: parseFloat(t.price24hPcnt) * 100,
+        price: ri(parseFloat(t.lastPrice)),
+        hourChangePct: r2(hourChangePct),
+        currentHourVolumeUsd: ri(currentHourVol),
+        avg24hHourlyVolumeUsd: ri(avgPriorVol),
+        spikeRatio: r2(spikeRatio),
+        price24hPct: r2(parseFloat(t.price24hPcnt) * 100),
         reading,
       } as VolumeSpikeResult;
     } catch {

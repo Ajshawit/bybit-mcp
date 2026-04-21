@@ -7,10 +7,14 @@ import {
   computeMoneyness,
 } from "./types";
 
+export type CompactOptionContract = Pick<OptionContract,
+  "symbol" | "strike" | "expiry" | "daysToExpiry" | "type" | "bid" | "ask" | "iv" | "openInterest"
+>;
+
 export interface OptionChainResult {
   underlying: string;
   spot: number;
-  contracts: OptionContract[];
+  contracts: OptionContract[] | CompactOptionContract[];
 }
 
 export async function handleGetOptionChain(
@@ -22,6 +26,7 @@ export async function handleGetOptionChain(
     type?: "call" | "put";
     minOpenInterest?: number;
     strikeRange?: { minPctFromSpot: number; maxPctFromSpot: number };
+    compact?: boolean;
   }
 ): Promise<OptionChainResult> {
   const {
@@ -31,6 +36,7 @@ export async function handleGetOptionChain(
     type,
     minOpenInterest = 10,
     strikeRange,
+    compact = false,
   } = params;
 
   const [chainRes, spotRes] = await Promise.all([
@@ -47,13 +53,13 @@ export async function handleGetOptionChain(
   const spot = parseFloat(spotRes.list[0]?.lastPrice ?? "0");
   const now = Date.now();
 
-  const contracts: OptionContract[] = [];
+  const contracts: Array<OptionContract | CompactOptionContract> = [];
 
   for (const t of chainRes.list) {
     let parsed: ReturnType<typeof parseOptionSymbol>;
     try { parsed = parseOptionSymbol(t.symbol); } catch { continue; }
 
-    const daysToExpiry = Math.max(0, Math.ceil((parsed.expiry.getTime() - now) / 86400000));
+    const daysToExpiry = Math.max(0, Math.round((parsed.expiry.getTime() - now) / 86400000));
     if (daysToExpiry < minDaysToExpiry || daysToExpiry > maxDaysToExpiry) continue;
     if (type && parsed.type !== type) continue;
 
@@ -65,21 +71,35 @@ export async function handleGetOptionChain(
       if (pct < strikeRange.minPctFromSpot || pct > strikeRange.maxPctFromSpot) continue;
     }
 
-    contracts.push({
-      symbol: t.symbol,
-      strike: parsed.strike,
-      expiry: parsed.expiry.toISOString(),
-      daysToExpiry,
-      type: parsed.type,
-      bid: parseFloat(t.bid1Price),
-      ask: parseFloat(t.ask1Price),
-      mark: parseFloat(t.markPrice),
-      lastPrice: parseFloat(t.lastPrice),
-      iv: parseFloat(t.markIv),
-      openInterest: oi,
-      volume24h: parseFloat(t.volume24h),
-      moneyness: computeMoneyness(parsed.strike, spot, parsed.type),
-    });
+    if (compact) {
+      contracts.push({
+        symbol: t.symbol,
+        strike: parsed.strike,
+        expiry: parsed.expiry.toISOString(),
+        daysToExpiry,
+        type: parsed.type,
+        bid: parseFloat(t.bid1Price),
+        ask: parseFloat(t.ask1Price),
+        iv: parseFloat(t.markIv),
+        openInterest: oi,
+      });
+    } else {
+      contracts.push({
+        symbol: t.symbol,
+        strike: parsed.strike,
+        expiry: parsed.expiry.toISOString(),
+        daysToExpiry,
+        type: parsed.type,
+        bid: parseFloat(t.bid1Price),
+        ask: parseFloat(t.ask1Price),
+        mark: parseFloat(t.markPrice),
+        lastPrice: parseFloat(t.lastPrice),
+        iv: parseFloat(t.markIv),
+        openInterest: oi,
+        volume24h: parseFloat(t.volume24h),
+        moneyness: computeMoneyness(parsed.strike, spot, parsed.type),
+      });
+    }
   }
 
   contracts.sort((a, b) =>

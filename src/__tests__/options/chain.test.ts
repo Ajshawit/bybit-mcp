@@ -135,10 +135,10 @@ describe("handleGetOptionChain", () => {
 
     const result = await handleGetOptionChain(client, { underlying: "BTC" });
     // strike 80000 < spot 95000 → ITM call
-    const itm = result.contracts.find((c) => c.strike === 80000 && c.type === "call")!;
+    const itm = result.contracts.find((c) => c.strike === 80000 && c.type === "call") as any;
     expect(itm.moneyness).toBe("ITM");
     // strike 100000 > spot 95000 → OTM call
-    const otm = result.contracts.find((c) => c.strike === 100000)!;
+    const otm = result.contracts.find((c) => c.strike === 100000) as any;
     expect(otm.moneyness).toBe("OTM");
   });
 });

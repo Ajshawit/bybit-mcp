@@ -32,6 +32,9 @@ export interface AccountStatus {
   option_positions: OptionPosition[];  // always present; empty array when none or options disabled
 }
 
+const r2 = (v: number) => Math.round(v * 100) / 100;
+const r4 = (v: number) => Math.round(v * 10000) / 10000;
+
 function mapPositions(list: PositionListResult["list"]): AccountPosition[] {
   return list
     .filter((p) => parseFloat(p.size) > 0)
@@ -45,11 +48,11 @@ function mapPositions(list: PositionListResult["list"]): AccountPosition[] {
         : (entry - mark) / entry * 100;
       return {
         symbol: p.symbol, side, size: parseFloat(p.size),
-        entryPrice: entry, markPrice: mark, uPnl, uPnlPct,
-        sl: p.stopLoss ? parseFloat(p.stopLoss) : null,
-        tp: p.takeProfit ? parseFloat(p.takeProfit) : null,
-        trailingStop: parseFloat(p.trailingStop || "0"),
-        liquidationPrice: (() => { const v = parseFloat(p.liquidationPrice); return v > 0 ? v : null; })(),
+        entryPrice: r2(entry), markPrice: r2(mark), uPnl: r2(uPnl), uPnlPct: r2(uPnlPct),
+        sl: p.stopLoss ? r2(parseFloat(p.stopLoss)) : null,
+        tp: p.takeProfit ? r2(parseFloat(p.takeProfit)) : null,
+        trailingStop: r2(parseFloat(p.trailingStop || "0")),
+        liquidationPrice: (() => { const v = parseFloat(p.liquidationPrice); return v > 0 ? r2(v) : null; })(),
         positionIdx: p.positionIdx,
       };
     });
@@ -86,22 +89,22 @@ function mapOptionPositions(list: BybitOptionPosition[]): OptionPosition[] {
         underlying: parsed.underlying,
         side,
         qty,
-        entryPrice,
-        markPrice,
-        premiumFlow,
-        currentValue,
-        unrealisedPnl,
-        unrealisedPnlPct,
-        realisedPnl,
-        totalPnl,
+        entryPrice: r2(entryPrice),
+        markPrice: r2(markPrice),
+        premiumFlow: r2(premiumFlow),
+        currentValue: r2(currentValue),
+        unrealisedPnl: r2(unrealisedPnl),
+        unrealisedPnlPct: r2(unrealisedPnlPct),
+        realisedPnl: r2(realisedPnl),
+        totalPnl: r2(totalPnl),
         greeks: {
-          delta: parseFloat(pos.delta ?? "0"),
-          gamma: parseFloat(pos.gamma ?? "0"),
-          theta: parseFloat(pos.theta ?? "0"),
-          vega: parseFloat(pos.vega ?? "0"),
+          delta: r4(parseFloat(pos.delta ?? "0")),
+          gamma: r4(parseFloat(pos.gamma ?? "0")),
+          theta: r4(parseFloat(pos.theta ?? "0")),
+          vega: r4(parseFloat(pos.vega ?? "0")),
         },
         daysToExpiry,
-        breakeven,
+        breakeven: r2(breakeven),
       };
     });
 }
