@@ -5,6 +5,20 @@ import { BybitClient } from "../../client";
 jest.mock("../../client");
 const MockClient = BybitClient as jest.MockedClass<typeof BybitClient>;
 
+const MONTH_ABBR = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
+
+function futureExpiry(daysFromNow: number): string {
+  const d = new Date(Date.now() + daysFromNow * 86400000);
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  const month = MONTH_ABBR[d.getUTCMonth()];
+  const year = String(d.getUTCFullYear()).slice(-2);
+  return `${day}${month}${year}`;
+}
+
+// NEAR = ~60 days out, FAR = ~150 days out — always in the future
+const NEAR = futureExpiry(60);
+const FAR = futureExpiry(150);
+
 const makeTicker = (symbol: string, iv: string) => ({
   symbol,
   lastPrice: "1000",
@@ -21,7 +35,6 @@ const makeTicker = (symbol: string, iv: string) => ({
 });
 
 // spot = 95000
-// Near expiry: 25APR26, far expiry: 30JUN26
 // ATM calls/puts at strike 95000 (same IV by put-call parity)
 // OTM put at 85000 (~10.5% below), OTM call at 105000 (~10.5% above)
 // near ATM call IV = 0.60, far ATM call IV = 0.65 → contango (diff=0.05, threshold=0.03)
@@ -29,12 +42,12 @@ const makeTicker = (symbol: string, iv: string) => ({
 //   → nearest put: 85000 (IV 0.70), nearest call: 105000 (IV 0.58) → skew = 0.12
 const mockBtcChain = {
   list: [
-    makeTicker("BTC-25APR26-95000-C-USDT", "0.60"),
-    makeTicker("BTC-25APR26-95000-P-USDT", "0.60"),
-    makeTicker("BTC-25APR26-85000-P-USDT", "0.70"),  // OTM put (-10.5%)
-    makeTicker("BTC-25APR26-105000-C-USDT", "0.58"), // OTM call (+10.5%)
-    makeTicker("BTC-30JUN26-95000-C-USDT", "0.65"),  // far expiry for term structure
-    makeTicker("BTC-30JUN26-95000-P-USDT", "0.65"),
+    makeTicker(`BTC-${NEAR}-95000-C-USDT`, "0.60"),
+    makeTicker(`BTC-${NEAR}-95000-P-USDT`, "0.60"),
+    makeTicker(`BTC-${NEAR}-85000-P-USDT`, "0.70"),  // OTM put (-10.5%)
+    makeTicker(`BTC-${NEAR}-105000-C-USDT`, "0.58"), // OTM call (+10.5%)
+    makeTicker(`BTC-${FAR}-95000-C-USDT`, "0.65"),   // far expiry for term structure
+    makeTicker(`BTC-${FAR}-95000-P-USDT`, "0.65"),
   ],
   category: "option",
 };
@@ -116,8 +129,8 @@ describe("handleGetOptionsRegime", () => {
   it("returns flat termStructure when only one expiry is available", async () => {
     const singleExpiry = {
       list: [
-        makeTicker("BTC-25APR26-95000-C-USDT", "0.60"),
-        makeTicker("BTC-25APR26-95000-P-USDT", "0.60"),
+        makeTicker(`BTC-${NEAR}-95000-C-USDT`, "0.60"),
+        makeTicker(`BTC-${NEAR}-95000-P-USDT`, "0.60"),
       ],
       category: "option",
     };

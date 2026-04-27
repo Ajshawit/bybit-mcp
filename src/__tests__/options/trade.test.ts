@@ -7,6 +7,12 @@ import { BybitClient } from "../../client";
 jest.mock("../../client");
 const MockClient = BybitClient as jest.MockedClass<typeof BybitClient>;
 
+const MONTH_ABBR = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
+function futureExpiry(daysFromNow: number): string {
+  const d = new Date(Date.now() + daysFromNow * 86400000);
+  return `${String(d.getUTCDate()).padStart(2,"0")}${MONTH_ABBR[d.getUTCMonth()]}${String(d.getUTCFullYear()).slice(-2)}`;
+}
+
 // BTC-25APR28-80000-C-USDT: expires April 2028 — never expires during test runs
 const SYMBOL = "BTC-25APR28-80000-C-USDT";
 
@@ -195,7 +201,7 @@ describe("handlePlaceOptionTrade", () => {
   });
 
   it("7b. ETH multiplier=1: insufficient USDC check uses correct premium (not 10x wrong)", async () => {
-    const ETH_SYMBOL = "ETH-24APR26-2400-C-USDT";
+    const ETH_SYMBOL = `ETH-${futureExpiry(365)}-2400-C-USDT`;
     const client = new MockClient("k", "s", "u");
     (client.publicGet as jest.Mock).mockResolvedValueOnce({
       list: [{ symbol: ETH_SYMBOL, bid1Price: "44", ask1Price: "45", markPrice: "44.5",
