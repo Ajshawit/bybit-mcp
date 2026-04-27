@@ -14,40 +14,118 @@ export interface OptionsRegimeResult {
   signals: Record<string, OptionsRegimeSignal>;
 }
 
-const ATM_PCT_THRESHOLD = 0.05;
-const TARGET_DAYS_NEAR = 30;
-const TARGET_DAYS_FAR = 60;
+const ATM_PCT = 0.10;     // ±10% of spot for ATM IV lookups
+const SKEW_OTM = 0.10;   // target 10% OTM for skew: put at spot*0.9, call at spot*1.1
 
-function findAtmIv(
+// Unique expiries from the chain, sorted ascending, DTE >= 0
+function sortedExpiries(
+  tickers: OptionTickersResult["list"],
+  now: number
+): Date[] {
+  const seen = new Map<number, Date>();
+  for (const t of tickers) {
+    try {
+      const p = parseOptionSymbol(t.symbol);
+      const dte = (p.expiry.getTime() - now) / 86400000;
+      if (dte >= 0) seen.set(p.expiry.getTime(), p.expiry);
+    } catch { continue; }
+  }
+  return Array.from(seen.values()).sort((a, b) => a.getTime() - b.getTime());
+}
+
+// Nearest-to-spot call IV for a given expiry
+function atmIvForExpiry(
   tickers: OptionTickersResult["list"],
   spot: number,
-  type: "call" | "put",
-  targetDays: number,
-  now: number
+  expiry: Date
 ): number | null {
-  let best: { iv: number; distDays: number; distPct: number } | null = null;
-
+  let best: { iv: number; dist: number } | null = null;
+  const expiryMs = expiry.getTime();
   for (const t of tickers) {
     let parsed;
     try { parsed = parseOptionSymbol(t.symbol); } catch { continue; }
-    if (parsed.type !== type) continue;
-
-    const dte = (parsed.expiry.getTime() - now) / 86400000;
-    if (dte < 0) continue;
-
-    const pctFromSpot = Math.abs(parsed.strike - spot) / spot;
-    if (pctFromSpot > ATM_PCT_THRESHOLD) continue;
-
-    const distDays = Math.abs(dte - targetDays);
+    if (parsed.type !== "call") continue;
+    if (parsed.expiry.getTime() !== expiryMs) continue;
+    const pct = Math.abs(parsed.strike - spot) / spot;
+    if (pct > ATM_PCT) continue;
     const iv = parseFloat(t.markIv);
-    if (isNaN(iv)) continue;
-
-    if (!best || distDays < best.distDays || (distDays === best.distDays && pctFromSpot < best.distPct)) {
-      best = { iv, distDays, distPct: pctFromSpot };
-    }
+    if (isNaN(iv) || iv <= 0) continue;
+    const dist = Math.abs(parsed.strike - spot);
+    if (!best || dist < best.dist) best = { iv, dist };
   }
-
   return best?.iv ?? null;
+}
+
+// ATM IV for the expiry closest to targetDays
+function atmIv30d(
+  tickers: OptionTickersResult["list"],
+  spot: number,
+  expiries: Date[],
+  targetDays: number,
+  now: number
+): number {
+  if (expiries.length === 0) return 0;
+  const target = now + targetDays * 86400000;
+  const nearest = expiries.reduce((a, b) =>
+    Math.abs(a.getTime() - target) <= Math.abs(b.getTime() - target) ? a : b
+  );
+  return atmIvForExpiry(tickers, spot, nearest) ?? 0;
+}
+
+// 10% OTM put minus 10% OTM call — use nearest liquid expiry
+function computeSkew(
+  tickers: OptionTickersResult["list"],
+  spot: number,
+  expiries: Date[]
+): number {
+  const putTarget = spot * (1 - SKEW_OTM);
+  const callTarget = spot * (1 + SKEW_OTM);
+
+  for (const expiry of expiries) {
+    const ms = expiry.getTime();
+    let bestPut: { iv: number; dist: number } | null = null;
+    let bestCall: { iv: number; dist: number } | null = null;
+
+    for (const t of tickers) {
+      let parsed;
+      try { parsed = parseOptionSymbol(t.symbol); } catch { continue; }
+      if (parsed.expiry.getTime() !== ms) continue;
+      const iv = parseFloat(t.markIv);
+      if (isNaN(iv) || iv <= 0) continue;
+
+      if (parsed.type === "put") {
+        const dist = Math.abs(parsed.strike - putTarget);
+        if (!bestPut || dist < bestPut.dist) bestPut = { iv, dist };
+      } else {
+        const dist = Math.abs(parsed.strike - callTarget);
+        if (!bestCall || dist < bestCall.dist) bestCall = { iv, dist };
+      }
+    }
+
+    if (bestPut && bestCall) return bestPut.iv - bestCall.iv;
+  }
+  return 0;
+}
+
+// Compare ATM IV of nearest vs farthest expiry, relative 5% threshold
+function computeTermStructure(
+  tickers: OptionTickersResult["list"],
+  spot: number,
+  expiries: Date[]
+): OptionsRegimeSignal["termStructure"] {
+  if (expiries.length < 2) return "flat";
+
+  const nearIv = atmIvForExpiry(tickers, spot, expiries[0]);
+  const farIv = atmIvForExpiry(tickers, spot, expiries[expiries.length - 1]);
+
+  if (nearIv == null || farIv == null) return "flat";
+
+  const diff = farIv - nearIv;
+  const threshold = nearIv * 0.05;
+
+  if (diff > threshold) return "contango";
+  if (diff < -threshold) return "backwardation";
+  return "flat";
 }
 
 export async function handleGetOptionsRegime(
@@ -85,21 +163,11 @@ export async function handleGetOptionsRegime(
     if (list.length === 0) continue;
 
     const spot = spotPrices[i];
+    const expiries = sortedExpiries(list, now);
 
-    const nearCallIv = findAtmIv(list, spot, "call", TARGET_DAYS_NEAR, now);
-    const nearPutIv = findAtmIv(list, spot, "put", TARGET_DAYS_NEAR, now);
-    const farCallIv = findAtmIv(list, spot, "call", TARGET_DAYS_FAR, now);
-
-    const atmIv30d = nearCallIv ?? 0;
-    const putCallSkew = nearCallIv != null && nearPutIv != null
-      ? nearPutIv - nearCallIv
-      : 0;
-
-    const termStructure: OptionsRegimeSignal["termStructure"] =
-      nearCallIv == null || farCallIv == null ? "flat"
-      : Math.abs(farCallIv - nearCallIv) < 0.02 ? "flat"
-      : farCallIv > nearCallIv ? "contango"
-      : "backwardation";
+    const iv30d = atmIv30d(list, spot, expiries, 30, now);
+    const putCallSkew = computeSkew(list, spot, expiries);
+    const termStructure = computeTermStructure(list, spot, expiries);
 
     for (const t of list) {
       const iv = parseFloat(t.markIv);
@@ -108,21 +176,32 @@ export async function handleGetOptionsRegime(
       }
     }
 
-    const nearTicker = list.find((t) => {
-      try {
-        const p = parseOptionSymbol(t.symbol);
-        const dte = (p.expiry.getTime() - now) / 86400000;
-        return p.type === "call" && Math.abs(p.strike - spot) / spot < ATM_PCT_THRESHOLD && dte >= 0;
-      } catch { return false; }
-    });
-    const nearBucket = nearTicker ? expiryBucket(nearTicker.symbol) : "unknown";
+    // IV percentile: find the near-30d expiry bucket
+    const target30d = now + 30 * 86400000;
+    const nearest30d = expiries.length > 0
+      ? expiries.reduce((a, b) =>
+          Math.abs(a.getTime() - target30d) <= Math.abs(b.getTime() - target30d) ? a : b
+        )
+      : null;
+    const nearBucket = nearest30d
+      ? (() => {
+          const match = list.find((t) => {
+            try {
+              const p = parseOptionSymbol(t.symbol);
+              return p.expiry.getTime() === nearest30d.getTime() && p.type === "call";
+            } catch { return false; }
+          });
+          return match ? expiryBucket(match.symbol) : "unknown";
+        })()
+      : "unknown";
+
     const sampleAvailable = ivStore.warmupRemaining(underlying, nearBucket) === null;
-    const ivPercentile30d = sampleAvailable && atmIv30d > 0
-      ? ivStore.getPercentile(underlying, nearBucket, atmIv30d)
+    const ivPercentile30d = sampleAvailable && iv30d > 0
+      ? ivStore.getPercentile(underlying, nearBucket, iv30d)
       : null;
 
     signals[underlying] = {
-      atmIv30d,
+      atmIv30d: iv30d,
       ivPercentile30d,
       putCallSkew,
       termStructure,

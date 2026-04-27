@@ -24,6 +24,7 @@ export interface AccountStatus {
   totalEquity: number;
   freeCapital: number;
   marginInUse: number;
+  marginReservedForOrders: number;
   unrealisedPnl: number;
   maintenanceMargin: number;
   positions: AccountPosition[];
@@ -34,6 +35,13 @@ export interface AccountStatus {
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
 const r4 = (v: number) => Math.round(v * 10000) / 10000;
+
+function rPrice(v: number): number {
+  if (v < 0.01) return Math.round(v * 1_000_000) / 1_000_000;
+  if (v < 1)    return Math.round(v * 100_000) / 100_000;
+  if (v < 100)  return Math.round(v * 10_000) / 10_000;
+  return Math.round(v * 100) / 100;
+}
 
 function mapPositions(list: PositionListResult["list"]): AccountPosition[] {
   return list
@@ -48,11 +56,11 @@ function mapPositions(list: PositionListResult["list"]): AccountPosition[] {
         : (entry - mark) / entry * 100;
       return {
         symbol: p.symbol, side, size: parseFloat(p.size),
-        entryPrice: r2(entry), markPrice: r2(mark), uPnl: r2(uPnl), uPnlPct: r2(uPnlPct),
-        sl: p.stopLoss ? r2(parseFloat(p.stopLoss)) : null,
-        tp: p.takeProfit ? r2(parseFloat(p.takeProfit)) : null,
-        trailingStop: r2(parseFloat(p.trailingStop || "0")),
-        liquidationPrice: (() => { const v = parseFloat(p.liquidationPrice); return v > 0 ? r2(v) : null; })(),
+        entryPrice: rPrice(entry), markPrice: rPrice(mark), uPnl: r2(uPnl), uPnlPct: r2(uPnlPct),
+        sl: p.stopLoss ? rPrice(parseFloat(p.stopLoss)) : null,
+        tp: p.takeProfit ? rPrice(parseFloat(p.takeProfit)) : null,
+        trailingStop: rPrice(parseFloat(p.trailingStop || "0")),
+        liquidationPrice: (() => { const v = parseFloat(p.liquidationPrice); return v > 0 ? rPrice(v) : null; })(),
         positionIdx: p.positionIdx,
       };
     });
@@ -128,6 +136,7 @@ export async function handleGetAccountStatus(
 
   const walletBalance = parseFloat(usdtCoin.walletBalance);
   const totalPositionIM = parseFloat(usdtCoin.totalPositionIM);
+  const totalOrderIM = parseFloat(usdtCoin.totalOrderIM ?? "0");
   const unrealisedPnl = parseFloat(usdtCoin.unrealisedPnl);
 
   const spot_holdings: SpotHolding[] = account.coin
@@ -141,8 +150,9 @@ export async function handleGetAccountStatus(
 
   return {
     totalEquity: parseFloat(account.totalEquity),
-    freeCapital: walletBalance - totalPositionIM,
+    freeCapital: walletBalance - totalPositionIM - totalOrderIM,
     marginInUse: totalPositionIM,
+    marginReservedForOrders: totalOrderIM,
     unrealisedPnl,
     maintenanceMargin: parseFloat(account.totalMaintenanceMargin),
     positions: mapPositions(linearRes.list),

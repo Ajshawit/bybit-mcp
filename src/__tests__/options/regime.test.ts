@@ -18,14 +18,23 @@ const makeTicker = (symbol: string, iv: string) => ({
   gamma: "0.0001",
   theta: "-50",
   vega: "100",
-  underlyingPrice: "95000",
 });
 
+// spot = 95000
+// Near expiry: 25APR26, far expiry: 30JUN26
+// ATM calls/puts at strike 95000 (same IV by put-call parity)
+// OTM put at 85000 (~10.5% below), OTM call at 105000 (~10.5% above)
+// near ATM call IV = 0.60, far ATM call IV = 0.65 → contango (diff=0.05, threshold=0.03)
+// 10% OTM targets: put @ 85500, call @ 104500
+//   → nearest put: 85000 (IV 0.70), nearest call: 105000 (IV 0.58) → skew = 0.12
 const mockBtcChain = {
   list: [
     makeTicker("BTC-25APR26-95000-C-USDT", "0.60"),
-    makeTicker("BTC-25APR26-95000-P-USDT", "0.70"),
-    makeTicker("BTC-30JUN26-95000-C-USDT", "0.65"),
+    makeTicker("BTC-25APR26-95000-P-USDT", "0.60"),
+    makeTicker("BTC-25APR26-85000-P-USDT", "0.70"),  // OTM put (-10.5%)
+    makeTicker("BTC-25APR26-105000-C-USDT", "0.58"), // OTM call (+10.5%)
+    makeTicker("BTC-30JUN26-95000-C-USDT", "0.65"),  // far expiry for term structure
+    makeTicker("BTC-30JUN26-95000-P-USDT", "0.65"),
   ],
   category: "option",
 };
@@ -50,7 +59,7 @@ describe("handleGetOptionsRegime", () => {
     expect(result.signals["ETH"]).toBeUndefined();
   });
 
-  it("identifies contango when near IV < far IV", async () => {
+  it("identifies contango when near expiry IV < far expiry IV", async () => {
     const client = new MockClient("k", "s", "u");
     const store = new IVSampleStore();
     (client.publicGet as jest.Mock).mockImplementation(mockPublicGet(mockBtcChain));
@@ -59,13 +68,24 @@ describe("handleGetOptionsRegime", () => {
     expect(result.signals["BTC"].termStructure).toBe("contango");
   });
 
-  it("computes putCallSkew as put IV minus call IV at same expiry", async () => {
+  it("computes putCallSkew using 10% OTM put minus 10% OTM call", async () => {
     const client = new MockClient("k", "s", "u");
     const store = new IVSampleStore();
     (client.publicGet as jest.Mock).mockImplementation(mockPublicGet(mockBtcChain));
 
     const result = await handleGetOptionsRegime(client, store, { underlying: ["BTC"] });
-    expect(Math.abs(result.signals["BTC"].putCallSkew - 0.10)).toBeLessThan(0.01);
+    // put at 85000 IV=0.70, call at 105000 IV=0.58 → skew ≈ 0.12
+    expect(result.signals["BTC"].putCallSkew).toBeCloseTo(0.12, 2);
+  });
+
+  it("putCallSkew is non-zero even when ATM put/call have identical IV", async () => {
+    // ATM put and call are both 0.60 (put-call parity) but OTM put has higher IV
+    const client = new MockClient("k", "s", "u");
+    const store = new IVSampleStore();
+    (client.publicGet as jest.Mock).mockImplementation(mockPublicGet(mockBtcChain));
+
+    const result = await handleGetOptionsRegime(client, store, { underlying: ["BTC"] });
+    expect(result.signals["BTC"].putCallSkew).not.toBe(0);
   });
 
   it("sampleAvailable=false before warmup", async () => {
@@ -91,5 +111,21 @@ describe("handleGetOptionsRegime", () => {
     expect(coins).toContain("BTC");
     expect(coins).toContain("ETH");
     expect(coins).toContain("SOL");
+  });
+
+  it("returns flat termStructure when only one expiry is available", async () => {
+    const singleExpiry = {
+      list: [
+        makeTicker("BTC-25APR26-95000-C-USDT", "0.60"),
+        makeTicker("BTC-25APR26-95000-P-USDT", "0.60"),
+      ],
+      category: "option",
+    };
+    const client = new MockClient("k", "s", "u");
+    const store = new IVSampleStore();
+    (client.publicGet as jest.Mock).mockImplementation(mockPublicGet(singleExpiry));
+
+    const result = await handleGetOptionsRegime(client, store, { underlying: ["BTC"] });
+    expect(result.signals["BTC"].termStructure).toBe("flat");
   });
 });

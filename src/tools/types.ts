@@ -2,6 +2,7 @@ export interface WalletBalanceCoin {
   coin: string;
   walletBalance: string;
   totalPositionIM: string;
+  totalOrderIM?: string;
   unrealisedPnl: string;
   equity: string;
   locked: string;

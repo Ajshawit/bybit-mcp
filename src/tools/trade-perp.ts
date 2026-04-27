@@ -44,6 +44,11 @@ export async function handlePlacePerp(
   if (orderType === "Limit" && limitPrice == null) {
     throw new Error("price is required for limit orders");
   }
+  if (orderType === "Limit" && trailingStop != null) {
+    throw new Error(
+      "Trailing stops cannot be set on resting limit orders — Bybit requires an open position first. Place the order, then add trailing via manage_position after fill."
+    );
+  }
 
   const marginCoin = category === "inverse" ? parseBaseCoin(symbol) : "USDT";
 

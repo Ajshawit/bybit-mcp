@@ -9,6 +9,7 @@ import { BybitClient } from "./client";
 import { handleGetAccountStatus } from "./tools/account";
 import { handleGetMarketData, handleScanMarket, handleGetOhlc, handleGetMarketRegime, ScanFilter } from "./tools/market";
 import { handlePlaceTrade, handleClosePosition, handleManagePosition } from "./tools/trade";
+import { handleListOpenOrders, handleCancelOrder, handleCancelAllOrders } from "./tools/orders";
 import {
   handleGetOptionChain, handleGetOptionQuote, handleGetOptionPayoff,
   handleScanOptions, handleGetOptionsRegime, IVSampleStore,
@@ -181,6 +182,43 @@ function createServer(apiKey: string, apiSecret: string, enableOptions: boolean)
             notes: { type: "string", description: "Rationale — echoed back in response" },
           },
           required: ["symbol", "side", "updates"],
+        },
+      },
+      {
+        name: "list_open_orders",
+        description: "List all resting (unfilled) orders. Returns entry price, size, SL, TP, trailing stop, activation price, fill status, and orderId for each order. Use before cancel_order to look up the orderId of an order you want to cancel.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            symbol: { type: "string", description: "Filter by symbol e.g. BTCUSDT. Omit to list all symbols." },
+            category: { type: "string", enum: ["linear", "inverse", "spot", "option"], description: "Default: linear" },
+          },
+          required: [],
+        },
+      },
+      {
+        name: "cancel_order",
+        description: "Cancel a specific resting order by orderId. Use list_open_orders first to find the orderId. Non-destructive to other orders.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            symbol: { type: "string", description: "Symbol e.g. BTCUSDT" },
+            orderId: { type: "string", description: "Order ID from list_open_orders or place_trade response" },
+            category: { type: "string", enum: ["linear", "inverse", "spot", "option"], description: "Default: linear" },
+          },
+          required: ["symbol", "orderId"],
+        },
+      },
+      {
+        name: "cancel_all_orders",
+        description: "Cancel all resting orders for a symbol or entire category. CONFIRMATION REQUIRED: (1) Present the cancellation plan — which symbol or category, how many orders will be cancelled (call list_open_orders first). (2) Wait for the user to reply with 'CONFIRM'. (3) Only call this tool after receiving explicit CONFIRM. Never call this tool in the same turn as proposing the cancellation.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            symbol: { type: "string", description: "Cancel only orders for this symbol. Omit to cancel all orders in the category." },
+            category: { type: "string", enum: ["linear", "inverse", "spot", "option"], description: "Default: linear" },
+          },
+          required: [],
         },
       },
       ...(ENABLE_OPTIONS ? [
@@ -392,6 +430,31 @@ function createServer(apiKey: string, apiSecret: string, enableOptions: boolean)
             notes: a.notes as string | undefined,
           });
           break;
+
+        case "list_open_orders": {
+          result = await handleListOpenOrders(client, {
+            symbol: a.symbol as string | undefined,
+            category: a.category as "linear" | "inverse" | "spot" | "option" | undefined,
+          });
+          break;
+        }
+
+        case "cancel_order": {
+          result = await handleCancelOrder(client, {
+            symbol: a.symbol as string,
+            orderId: a.orderId as string,
+            category: a.category as "linear" | "inverse" | "spot" | "option" | undefined,
+          });
+          break;
+        }
+
+        case "cancel_all_orders": {
+          result = await handleCancelAllOrders(client, {
+            symbol: a.symbol as string | undefined,
+            category: a.category as "linear" | "inverse" | "spot" | "option" | undefined,
+          });
+          break;
+        }
 
         case "options_market": {
           if (!ivStore) throw new Error("Options module not enabled");

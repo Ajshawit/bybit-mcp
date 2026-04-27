@@ -135,11 +135,17 @@ export async function handleScanOptions(
     if (filter === "high_iv") {
       sorted = nearSpot
         .filter((c) => !pctAvailable || (c.ivPercentile ?? 0) >= 90)
-        .sort((a, b) => b.iv - a.iv);
+        .sort((a, b) => pctAvailable
+          ? (b.ivPercentile ?? 0) - (a.ivPercentile ?? 0)
+          : b.iv - a.iv
+        );
     } else {
       sorted = nearSpot
         .filter((c) => !pctAvailable || (c.ivPercentile ?? 100) <= 10)
-        .sort((a, b) => a.iv - b.iv);
+        .sort((a, b) => pctAvailable
+          ? (a.ivPercentile ?? 100) - (b.ivPercentile ?? 100)
+          : a.iv - b.iv
+        );
     }
   } else {
     // skew and high_oi_change: placeholder — real analysis not yet implemented
