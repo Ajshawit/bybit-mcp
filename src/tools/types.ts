@@ -229,7 +229,7 @@ export interface TradfiInstrument {
   status: string;
   tickSize: string;
   minOrderQty: string;
-  maxOrderQty: string;
+  maxOrderQty?: string;
   maxLeverage?: string;
 }
 

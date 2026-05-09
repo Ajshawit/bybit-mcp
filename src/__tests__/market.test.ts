@@ -800,4 +800,16 @@ describe("handleListTradfiInstruments", () => {
     expect(calls.some(([, p]: [string, Record<string, string>]) => p.symbolType === "stock" && p.category === "linear")).toBe(true);
     expect(calls.some(([, p]: [string, Record<string, string>]) => p.symbolType === "commodity" && p.category === "linear")).toBe(true);
   });
+
+  it("makes only one publicGet call when type is filtered", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue({ list: [] });
+
+    await handleListTradfiInstruments(client, "xstocks");
+
+    expect((client.publicGet as jest.Mock).mock.calls).toHaveLength(1);
+    const [, params] = (client.publicGet as jest.Mock).mock.calls[0];
+    expect(params.symbolType).toBe("xstocks");
+    expect(params.category).toBe("spot");
+  });
 });
