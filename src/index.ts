@@ -34,7 +34,7 @@ function createServer(apiKey: string, apiSecret: string, enableOptions: boolean)
     tools: [
       {
         name: "get_account_status",
-        description: "Get current account balance, free capital, margin in use, unrealised PnL, and all open positions. Returns three position arrays: `positions` (linear USDT perps), `inverse_positions` (coin-margined perps), and `spot_holdings` (non-USDT spot balances with USD value). Each position includes entry price, mark price, PnL%, SL, TP, trailing stop, and liquidation price. When options are enabled, also returns `option_positions` (open option contracts with Greeks, premiumFlow, unrealisedPnl, daysToExpiry, and breakeven).",
+        description: "Get current account balance, free capital, margin in use, unrealised PnL, and all open positions. Returns three position arrays: `positions` (linear USDT perps), `inverse_positions` (coin-margined perps), and `spot_holdings` (non-USDT spot balances with USD value). Each position includes entry price, mark price, PnL%, SL, TP, trailing stop, and liquidation price. When options are enabled, also returns `option_positions` (open option contracts with Greeks, premiumFlow, unrealisedPnl, daysToExpiry, and breakeven). spot_holdings includes xStock token balances (e.g. coin='TSLAX') and any stablecoin balance used for xStock trading. accountInfo returns the API key's UID and account type so you can confirm which Bybit sub-account this MCP is keyed to.",
         inputSchema: { type: "object" as const, properties: {}, required: [] },
       },
       {

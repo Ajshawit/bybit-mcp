@@ -5,6 +5,11 @@ import {
   BybitOptionPosition, OptionPositionListResult,
 } from "./options/types";
 
+interface QueryApiResult {
+  uid: string;
+  accountType: string;
+}
+
 export interface AccountPosition {
   symbol: string;
   side: "LONG" | "SHORT";
@@ -31,6 +36,7 @@ export interface AccountStatus {
   inverse_positions: AccountPosition[];
   spot_holdings: SpotHolding[];
   option_positions: OptionPosition[];  // always present; empty array when none or options disabled
+  accountInfo?: { uid: string; accountType: string };
 }
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -121,13 +127,14 @@ export async function handleGetAccountStatus(
   client: BybitClient,
   includeOptions = false
 ): Promise<AccountStatus> {
-  const [walletRes, linearRes, inverseRes, optionRes] = await Promise.all([
+  const [walletRes, linearRes, inverseRes, optionRes, queryApiRes] = await Promise.all([
     client.signedGet<WalletBalanceResult>("/v5/account/wallet-balance", { accountType: "UNIFIED" }),
     client.signedGet<PositionListResult>("/v5/position/list", { category: "linear", settleCoin: "USDT" }),
     client.signedGet<PositionListResult>("/v5/position/list", { category: "inverse", settleCoin: "USD" }),
     includeOptions
       ? client.signedGet<OptionPositionListResult>("/v5/position/list", { category: "option" })
       : Promise.resolve({ list: [] as BybitOptionPosition[] }),
+    Promise.resolve(client.signedGet<QueryApiResult>("/v5/user/query-api", {})).catch(() => null),
   ]);
 
   const account = walletRes.list[0];
@@ -159,5 +166,6 @@ export async function handleGetAccountStatus(
     inverse_positions: mapPositions(inverseRes.list),
     spot_holdings,
     option_positions: mapOptionPositions(optionRes.list),
+    accountInfo: queryApiRes ? { uid: queryApiRes.uid, accountType: queryApiRes.accountType } : undefined,
   };
 }

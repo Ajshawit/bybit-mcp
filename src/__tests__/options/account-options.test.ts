@@ -32,29 +32,31 @@ const mockLongCallPos = {
 };
 
 describe("handleGetAccountStatus — option_positions", () => {
-  it("18. includeOptions=false makes exactly 3 signedGet calls (no option fetch)", async () => {
+  it("18. includeOptions=false makes exactly 4 signedGet calls (no option fetch, includes query-api)", async () => {
     const client = new MockClient("key", "secret", "url");
     (client.signedGet as jest.Mock)
       .mockResolvedValueOnce(mockWalletBalance)
       .mockResolvedValueOnce(emptyPositions)
-      .mockResolvedValueOnce(emptyPositions);
+      .mockResolvedValueOnce(emptyPositions)
+      .mockResolvedValueOnce({ uid: "12345678", accountType: "UNIFIED" }); // query-api
 
     await handleGetAccountStatus(client, false);
 
-    expect((client.signedGet as jest.Mock).mock.calls).toHaveLength(3);
+    expect((client.signedGet as jest.Mock).mock.calls).toHaveLength(4);
   });
 
-  it("19. includeOptions=true makes 4 signedGet calls and includes option positions", async () => {
+  it("19. includeOptions=true makes 5 signedGet calls and includes option positions", async () => {
     const client = new MockClient("key", "secret", "url");
     (client.signedGet as jest.Mock)
       .mockResolvedValueOnce(mockWalletBalance)
       .mockResolvedValueOnce(emptyPositions)
       .mockResolvedValueOnce(emptyPositions)
-      .mockResolvedValueOnce(mockLongCallPos);
+      .mockResolvedValueOnce(mockLongCallPos)
+      .mockResolvedValueOnce({ uid: "12345678", accountType: "UNIFIED" }); // query-api
 
     const result = await handleGetAccountStatus(client, true);
 
-    expect((client.signedGet as jest.Mock).mock.calls).toHaveLength(4);
+    expect((client.signedGet as jest.Mock).mock.calls).toHaveLength(5);
     expect(result.option_positions).toHaveLength(1);
   });
 

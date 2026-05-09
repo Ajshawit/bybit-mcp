@@ -117,4 +117,19 @@ describe("handleGetAccountStatus", () => {
     expect(result.positions).toHaveLength(1);
     expect(result.positions[0].symbol).toBe("BTCUSDT");
   });
+
+  it("returns accountInfo with uid and accountType when query-api succeeds", async () => {
+    const client = new MockClient("key", "secret", "url");
+    (client.signedGet as jest.Mock)
+      .mockResolvedValueOnce(mockWalletBalance)    // wallet balance
+      .mockResolvedValueOnce(emptyPositions)         // linear positions
+      .mockResolvedValueOnce(emptyPositions)         // inverse positions
+      .mockResolvedValueOnce({ uid: "12345678", accountType: "UNIFIED" }); // query-api (options slot uses Promise.resolve, no signedGet call)
+
+    const result = await handleGetAccountStatus(client);
+
+    expect(result.accountInfo).toBeDefined();
+    expect(result.accountInfo!.uid).toBe("12345678");
+    expect(result.accountInfo!.accountType).toBe("UNIFIED");
+  });
 });
