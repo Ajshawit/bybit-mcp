@@ -39,11 +39,16 @@ function createServer(apiKey: string, apiSecret: string, enableOptions: boolean)
       },
       {
         name: "get_market_data",
-        description: "Get comprehensive market data for a single linear perpetual symbol: current price, funding rate, next funding settlement time + seconds-to-next-funding (UTC), open interest, klines for requested intervals, funding rate history, and top-20 orderbook depth.",
+        description: "Get comprehensive market data for a symbol — current price, mark price, ticker, spread, orderbook depth, klines, funding rate, open interest. For linear perpetuals (crypto perps, stock perps e.g. TSLAPUSDT, commodity perps e.g. XAUUSDT): full funding/OI data. For xStock tokens (category=spot, e.g. TSLAXUSDT): price, OHLC, orderbook, and NYSE market hours status — funding/OI fields are omitted. Use list_tradfi_instruments to discover available TradFi symbols.",
         inputSchema: {
           type: "object" as const,
           properties: {
             symbol: { type: "string", description: "Symbol e.g. BTCUSDT" },
+            category: {
+              type: "string",
+              enum: ["linear", "spot"],
+              description: "linear (default) for crypto perps, stock perps (e.g. TSLAPUSDT), commodity perps (e.g. XAUUSDT). spot for xStock tokens (e.g. TSLAXUSDT) — returns price, OHLC, orderbook and NYSE market hours status instead of funding/OI.",
+            },
             klineIntervals: { type: "array", items: { type: "string" }, description: "Kline intervals e.g. [\"60\",\"240\"]. Default: [\"60\",\"240\"]" },
             klineLimit: { type: "number", description: "Number of candles per interval. Default: 24" },
             fundingHistoryLimit: { type: "number", description: "Number of funding rate history records. Default: 8" },
@@ -67,7 +72,7 @@ function createServer(apiKey: string, apiSecret: string, enableOptions: boolean)
       },
       {
         name: "get_ohlc",
-        description: "Fetch raw OHLC candles for any symbol and category. Returns candles newest-first; candles[0] is the most recent bar and its close is exposed as lastPrice. Use for swing level identification, stop placement reference, and blue-chip context (e.g. BTCUSDT spot or BTCUSD inverse). Returns empty candles array (not an error) if Bybit returns no data for the requested range.",
+        description: "Fetch raw OHLC candles for any symbol and category. Returns candles newest-first; candles[0] is the most recent bar and its close is exposed as lastPrice. Use for swing level identification, stop placement reference, and blue-chip context (e.g. BTCUSDT spot or BTCUSD inverse). Returns empty candles array (not an error) if Bybit returns no data for the requested range. Works for all TradFi symbols: use category=spot for xStocks (e.g. TSLAXUSDT), category=linear for stock/commodity perps (e.g. TSLAPUSDT, XAUUSDT).",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -109,7 +114,7 @@ function createServer(apiKey: string, apiSecret: string, enableOptions: boolean)
       },
       {
         name: "place_trade",
-        description: "Place a trade on a Bybit linear perp, inverse perp, or spot market. Supports market and limit entry orders. For inverse perps the `margin` field is in base coin units (e.g. BTC for BTCUSD). CONFIRMATION REQUIRED: (1) Present the full trade plan — symbol, category, side, margin, leverage (perps), SL (perps), TP, estimated position size. (2) Wait for the user to reply with 'CONFIRM'. (3) Only call this tool after receiving explicit CONFIRM. Never call this tool in the same turn as presenting the trade plan. Recommended workflow: present plan → CONFIRM → call with dry_run=true → verify computedQty, notional, and warnings → call again with dry_run=false. The dry_run call does not require a second CONFIRM. If dry_run returns wouldSubmit: false, do not proceed without addressing the warnings.",
+        description: "Place a trade on a Bybit linear perp, inverse perp, or spot market. Supports market and limit entry orders. For inverse perps the `margin` field is in base coin units (e.g. BTC for BTCUSD). CONFIRMATION REQUIRED: (1) Present the full trade plan — symbol, category, side, margin, leverage (perps), SL (perps), TP, estimated position size. (2) Wait for the user to reply with 'CONFIRM'. (3) Only call this tool after receiving explicit CONFIRM. Never call this tool in the same turn as presenting the trade plan. Recommended workflow: present plan → CONFIRM → call with dry_run=true → verify computedQty, notional, and warnings → call again with dry_run=false. The dry_run call does not require a second CONFIRM. If dry_run returns wouldSubmit: false, do not proceed without addressing the warnings. TradFi: xStock tokens use category=spot (e.g. TSLAXUSDT — tokenized equities, no leverage or SL required). Stock perpetuals and commodity perpetuals use category=linear (e.g. TSLAPUSDT for TSLA perp, XAUUSDT for gold). Call list_tradfi_instruments to confirm the exact symbol before the first TradFi trade in a session.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -191,7 +196,7 @@ function createServer(apiKey: string, apiSecret: string, enableOptions: boolean)
           type: "object" as const,
           properties: {
             symbol: { type: "string", description: "Filter by symbol e.g. BTCUSDT. Omit to list all symbols." },
-            category: { type: "string", enum: ["linear", "inverse", "spot", "option"], description: "Default: linear" },
+            category: { type: "string", enum: ["linear", "inverse", "spot", "spot_margin", "option"], description: "Default: linear" },
           },
           required: [],
         },
@@ -204,7 +209,7 @@ function createServer(apiKey: string, apiSecret: string, enableOptions: boolean)
           properties: {
             symbol: { type: "string", description: "Symbol e.g. BTCUSDT" },
             orderId: { type: "string", description: "Order ID from list_open_orders or place_trade response" },
-            category: { type: "string", enum: ["linear", "inverse", "spot", "option"], description: "Default: linear" },
+            category: { type: "string", enum: ["linear", "inverse", "spot", "spot_margin", "option"], description: "Default: linear" },
           },
           required: ["symbol", "orderId"],
         },
@@ -226,7 +231,7 @@ function createServer(apiKey: string, apiSecret: string, enableOptions: boolean)
       },
       {
         name: "list_tradfi_instruments",
-        description: "Discover available TradFi instruments on Bybit. Returns xStocks (tokenized equities e.g. TSLAXUSDT — trade with category=spot), stock perpetuals (e.g. TSLAPUSDT — trade with category=linear), and commodity perpetuals (e.g. XAUUSDT gold, XAGUSDT silver, CLUSDT crude oil — trade with category=linear). Always call this before the first TradFi trade in a session to confirm exact symbols and constraints (tickSize, minOrderQty, maxLeverage).",
+        description: "Discover available TradFi instruments on Bybit. Returns xStocks (tokenized equities e.g. TSLAXUSDT — trade with category=spot), stock perpetuals (e.g. TSLAPUSDT — trade with category=linear), and commodity perpetuals (e.g. XAUUSDT gold, XAGUSDT silver, CLUSDT crude oil — trade with category=linear). Always call this before the first TradFi trade in a session to confirm exact symbols and constraints (tickSize, minOrderQty, maxLeverage). Note: stock perps and xStocks trade on Bybit around the clock but underlying equity prices only move during NYSE hours (09:30–16:00 ET, Mon–Fri). Use get_market_data with category=spot on xStock symbols to get real-time NYSE session status.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -373,7 +378,8 @@ function createServer(apiKey: string, apiSecret: string, enableOptions: boolean)
             a.klineIntervals as string[] | undefined,
             a.klineLimit as number | undefined,
             a.fundingHistoryLimit as number | undefined,
-            a.includeOrderbook as boolean | undefined
+            a.includeOrderbook as boolean | undefined,
+            (a.category as "linear" | "spot" | undefined) ?? "linear"
           );
           result = { ...data, serverTimestamp: new Date().toISOString() };
           break;
