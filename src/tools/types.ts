@@ -200,3 +200,42 @@ export interface DryRunResult {
   wouldSubmit: boolean;
   serverTimestamp: string;
 }
+
+// Raw API response type for instruments-info TradFi discovery queries.
+// Richer than InstrumentInfoResult which is kept minimal for trade-shared use.
+export interface TradfiInstrumentRaw {
+  symbol: string;
+  baseCoin: string;
+  status: string;
+  priceFilter: { tickSize: string };
+  lotSizeFilter: {
+    minOrderQty: string;
+    maxOrderQty?: string;
+    basePrecision?: string;
+    qtyStep?: string;
+  };
+  leverageFilter?: { maxLeverage?: string };
+}
+
+export interface TradfiInstrumentListResult {
+  list: TradfiInstrumentRaw[];
+  nextPageCursor?: string;
+}
+
+export interface TradfiInstrument {
+  symbol: string;
+  baseCoin: string;
+  type: "xstock" | "stock_perp" | "commodity_perp";
+  status: string;
+  tickSize: string;
+  minOrderQty: string;
+  maxOrderQty: string;
+  maxLeverage?: string;
+}
+
+export interface TradfiInstrumentsResult {
+  xstocks: TradfiInstrument[];
+  stock_perps: TradfiInstrument[];
+  commodity_perps: TradfiInstrument[];
+  total: number;
+}
