@@ -39,13 +39,12 @@ export interface NyseStatus {
   note: string;
 }
 
-function getNthSundayUtc(year: number, month: number, n: number): Date {
+function getNthSundayUtc(year: number, month: number, n: number, utcHour: number): Date {
   // month is 0-indexed (2=March, 10=November)
-  // DST changes at 2 AM local = 7 AM UTC (EST offset) on the Sunday
   const firstOfMonth = new Date(Date.UTC(year, month, 1));
   const firstSunday = (7 - firstOfMonth.getUTCDay()) % 7 + 1;
   const dayOfMonth = firstSunday + (n - 1) * 7;
-  return new Date(Date.UTC(year, month, dayOfMonth, 7));
+  return new Date(Date.UTC(year, month, dayOfMonth, utcHour));
 }
 
 export function isNyseOpen(now = new Date()): NyseStatus {
@@ -53,8 +52,8 @@ export function isNyseOpen(now = new Date()): NyseStatus {
   if (day === 0 || day === 6) return { open: false, session: "closed", note: "Weekend — NYSE closed" };
 
   const year = now.getUTCFullYear();
-  const dstStart = getNthSundayUtc(year, 2, 2); // 2nd Sunday in March
-  const dstEnd = getNthSundayUtc(year, 10, 1);  // 1st Sunday in November
+  const dstStart = getNthSundayUtc(year, 2, 2, 7);  // spring-forward: 2 AM EST = 07:00 UTC
+  const dstEnd   = getNthSundayUtc(year, 10, 1, 6); // fall-back: 2 AM EDT = 06:00 UTC
   const isDst = now >= dstStart && now < dstEnd;
   const etOffsetHours = isDst ? -4 : -5;
 
