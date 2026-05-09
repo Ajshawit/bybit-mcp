@@ -1,4 +1,4 @@
-import { handleGetMarketData, handleScanMarket, handleGetOhlc, handleGetMarketRegime } from "../tools/market";
+import { handleGetMarketData, handleScanMarket, handleGetOhlc, handleGetMarketRegime, handleListTradfiInstruments } from "../tools/market";
 import { BybitClient } from "../client";
 
 jest.mock("../client");
@@ -693,5 +693,111 @@ describe("handleGetMarketRegime", () => {
     await handleGetMarketRegime(client, "macro");
 
     expect(client.publicGet).toHaveBeenCalledWith("/v5/market/kline", expect.objectContaining({ interval: "D" }));
+  });
+});
+
+describe("handleListTradfiInstruments", () => {
+  function makeRawInstrument(overrides: Partial<{
+    symbol: string; baseCoin: string; status: string;
+    tickSize: string; minOrderQty: string; maxOrderQty: string; maxLeverage: string;
+  }> = {}) {
+    return {
+      symbol: overrides.symbol ?? "TSLAXUSDT",
+      baseCoin: overrides.baseCoin ?? "TSLAX",
+      status: overrides.status ?? "Trading",
+      priceFilter: { tickSize: overrides.tickSize ?? "0.01" },
+      lotSizeFilter: {
+        minOrderQty: overrides.minOrderQty ?? "1",
+        maxOrderQty: overrides.maxOrderQty ?? "10000",
+        basePrecision: "1",
+      },
+      leverageFilter: overrides.maxLeverage ? { maxLeverage: overrides.maxLeverage } : undefined,
+    };
+  }
+
+  it("returns xstocks from spot/xstocks call", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce({ list: [makeRawInstrument({ symbol: "TSLAXUSDT", baseCoin: "TSLAX" })] }) // xstocks
+      .mockResolvedValueOnce({ list: [] }) // stock_perps
+      .mockResolvedValueOnce({ list: [] }); // commodity_perps
+
+    const result = await handleListTradfiInstruments(client);
+
+    expect(result.xstocks).toHaveLength(1);
+    expect(result.xstocks[0].symbol).toBe("TSLAXUSDT");
+    expect(result.xstocks[0].type).toBe("xstock");
+    expect(result.xstocks[0].maxLeverage).toBeUndefined();
+  });
+
+  it("returns stock_perps from linear/stock call", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce({ list: [] }) // xstocks
+      .mockResolvedValueOnce({ list: [makeRawInstrument({ symbol: "TSLAPUSDT", baseCoin: "TSLAP", maxLeverage: "5" })] })
+      .mockResolvedValueOnce({ list: [] });
+
+    const result = await handleListTradfiInstruments(client);
+
+    expect(result.stock_perps).toHaveLength(1);
+    expect(result.stock_perps[0].symbol).toBe("TSLAPUSDT");
+    expect(result.stock_perps[0].type).toBe("stock_perp");
+    expect(result.stock_perps[0].maxLeverage).toBe("5");
+  });
+
+  it("returns commodity_perps from linear/commodity call", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce({ list: [] })
+      .mockResolvedValueOnce({ list: [] })
+      .mockResolvedValueOnce({ list: [makeRawInstrument({ symbol: "XAUUSDT", baseCoin: "XAU", maxLeverage: "25" })] });
+
+    const result = await handleListTradfiInstruments(client);
+
+    expect(result.commodity_perps).toHaveLength(1);
+    expect(result.commodity_perps[0].symbol).toBe("XAUUSDT");
+    expect(result.commodity_perps[0].type).toBe("commodity_perp");
+  });
+
+  it("total equals sum of all three arrays", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce({ list: [makeRawInstrument({ symbol: "TSLAXUSDT" }), makeRawInstrument({ symbol: "AAPLXUSDT" })] })
+      .mockResolvedValueOnce({ list: [makeRawInstrument({ symbol: "TSLAPUSDT" })] })
+      .mockResolvedValueOnce({ list: [makeRawInstrument({ symbol: "XAUUSDT" })] });
+
+    const result = await handleListTradfiInstruments(client);
+    expect(result.total).toBe(4);
+  });
+
+  it("filters by search string case-insensitively", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce({ list: [
+        makeRawInstrument({ symbol: "TSLAXUSDT", baseCoin: "TSLAX" }),
+        makeRawInstrument({ symbol: "AAPLXUSDT", baseCoin: "AAPLX" }),
+      ]})
+      .mockResolvedValueOnce({ list: [makeRawInstrument({ symbol: "TSLAPUSDT", baseCoin: "TSLAP" })] })
+      .mockResolvedValueOnce({ list: [] });
+
+    const result = await handleListTradfiInstruments(client, "all", "tsla");
+
+    expect(result.xstocks).toHaveLength(1);
+    expect(result.xstocks[0].symbol).toBe("TSLAXUSDT");
+    expect(result.stock_perps).toHaveLength(1);
+    expect(result.stock_perps[0].symbol).toBe("TSLAPUSDT");
+  });
+
+  it("makes three parallel publicGet calls with correct params", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue({ list: [] });
+
+    await handleListTradfiInstruments(client);
+
+    const calls = (client.publicGet as jest.Mock).mock.calls;
+    expect(calls).toHaveLength(3);
+    expect(calls.some(([, p]: [string, Record<string, string>]) => p.symbolType === "xstocks" && p.category === "spot")).toBe(true);
+    expect(calls.some(([, p]: [string, Record<string, string>]) => p.symbolType === "stock" && p.category === "linear")).toBe(true);
+    expect(calls.some(([, p]: [string, Record<string, string>]) => p.symbolType === "commodity" && p.category === "linear")).toBe(true);
   });
 });

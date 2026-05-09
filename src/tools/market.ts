@@ -5,6 +5,9 @@ import {
   FundingHistoryResult,
   OrderbookEntry,
   OIHistoryResult,
+  TradfiInstrumentListResult,
+  TradfiInstrument,
+  TradfiInstrumentsResult,
 } from "./types";
 import { concurrentMap } from "../util";
 
@@ -575,4 +578,49 @@ async function scanVolumeSpike(
   return results
     .filter((r): r is VolumeSpikeResult => r !== null)
     .slice(0, limit);
+}
+
+export async function handleListTradfiInstruments(
+  client: BybitClient,
+  type: "xstocks" | "stock_perps" | "commodity_perps" | "all" = "all",
+  search?: string
+): Promise<TradfiInstrumentsResult> {
+  const [xstocksRes, stockPerpsRes, commodityPerpsRes] = await Promise.all([
+    type === "all" || type === "xstocks"
+      ? client.publicGet<TradfiInstrumentListResult>("/v5/market/instruments-info", { category: "spot", symbolType: "xstocks", limit: "500" })
+      : Promise.resolve({ list: [] }),
+    type === "all" || type === "stock_perps"
+      ? client.publicGet<TradfiInstrumentListResult>("/v5/market/instruments-info", { category: "linear", symbolType: "stock", limit: "500" })
+      : Promise.resolve({ list: [] }),
+    type === "all" || type === "commodity_perps"
+      ? client.publicGet<TradfiInstrumentListResult>("/v5/market/instruments-info", { category: "linear", symbolType: "commodity", limit: "500" })
+      : Promise.resolve({ list: [] }),
+  ]);
+
+  function mapInstrument(raw: TradfiInstrumentListResult["list"][number], instrumentType: TradfiInstrument["type"]): TradfiInstrument {
+    return {
+      symbol: raw.symbol,
+      baseCoin: raw.baseCoin,
+      type: instrumentType,
+      status: raw.status,
+      tickSize: raw.priceFilter.tickSize,
+      minOrderQty: raw.lotSizeFilter.minOrderQty,
+      maxOrderQty: raw.lotSizeFilter.maxOrderQty ?? raw.lotSizeFilter.basePrecision ?? "",
+      maxLeverage: raw.leverageFilter?.maxLeverage,
+    };
+  }
+
+  const searchLower = search?.toLowerCase();
+  function filterBySearch(instruments: TradfiInstrument[]): TradfiInstrument[] {
+    if (!searchLower) return instruments;
+    return instruments.filter((i) =>
+      i.symbol.toLowerCase().includes(searchLower) || i.baseCoin.toLowerCase().includes(searchLower)
+    );
+  }
+
+  const xstocks = filterBySearch(xstocksRes.list.map((r) => mapInstrument(r, "xstock")));
+  const stock_perps = filterBySearch(stockPerpsRes.list.map((r) => mapInstrument(r, "stock_perp")));
+  const commodity_perps = filterBySearch(commodityPerpsRes.list.map((r) => mapInstrument(r, "commodity_perp")));
+
+  return { xstocks, stock_perps, commodity_perps, total: xstocks.length + stock_perps.length + commodity_perps.length };
 }
