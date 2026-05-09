@@ -117,6 +117,22 @@ export interface OrderCreateResult {
   orderLinkId: string;
 }
 
+export interface OrderRealtimeItem {
+  orderId: string;
+  orderLinkId: string;
+  symbol: string;
+  orderStatus: string;
+  avgPrice: string;
+  cumExecQty: string;
+  cumExecValue: string;
+  cumExecFee: string;
+}
+
+export interface OrderRealtimeResult {
+  list: OrderRealtimeItem[];
+  category: string;
+}
+
 // Shared result types used by both perp and spot handlers
 
 export interface PlaceTradeResult {
@@ -124,7 +140,13 @@ export interface PlaceTradeResult {
   orderLinkId: string;
   symbol: string;
   filledQty: string;
+  // avgFillPrice is the actual VWAP from order/realtime when the order has
+  // executed. For unfilled or unconfirmed limits it falls back to the
+  // submitted reference price (limit price or last-traded price for market
+  // orders); check fillStatus and cumExecQty before journalling.
   avgFillPrice: number;
+  fillStatus: string;
+  cumExecQty: string;
   serverTimestamp: string;
   notes?: string;
   sizeWarning?: string;

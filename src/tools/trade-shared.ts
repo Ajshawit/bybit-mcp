@@ -1,9 +1,41 @@
 import { BybitClient } from "../client";
 import { instrumentsCache, positionModeCache } from "../cache";
-import { InstrumentInfoResult } from "./types";
+import { InstrumentInfoResult, OrderRealtimeResult } from "./types";
 
 export type PerpCategory = "linear" | "inverse";
 export type TradeCategory = "linear" | "inverse" | "spot" | "spot_margin";
+
+export interface FillSnapshot {
+  avgFillPrice: number;
+  fillStatus: string;
+  cumExecQty: string;
+}
+
+// Best-effort lookup of actual fill price after create. Bybit's order/create
+// returns only orderId; the executed VWAP lives on order/realtime. If the call
+// fails (e.g. transient error), we return the reference price so the trade
+// response stays informative — callers should consult fillStatus to decide
+// whether avgFillPrice is real or a fallback.
+export async function fetchFillSnapshot(
+  client: BybitClient,
+  category: string,
+  symbol: string,
+  orderId: string,
+  fallbackPrice: number
+): Promise<FillSnapshot> {
+  try {
+    const res = await client.signedGet<OrderRealtimeResult>("/v5/order/realtime", {
+      category, symbol, orderId,
+    });
+    const o = res.list[0];
+    if (!o) return { avgFillPrice: fallbackPrice, fillStatus: "Unknown", cumExecQty: "0" };
+    const cumExecQty = o.cumExecQty || "0";
+    const avgFillPrice = parseFloat(cumExecQty) > 0 ? parseFloat(o.avgPrice) : fallbackPrice;
+    return { avgFillPrice, fillStatus: o.orderStatus || "Unknown", cumExecQty };
+  } catch {
+    return { avgFillPrice: fallbackPrice, fillStatus: "Unknown", cumExecQty: "0" };
+  }
+}
 
 export async function ensureInstrumentInfo(
   client: BybitClient,

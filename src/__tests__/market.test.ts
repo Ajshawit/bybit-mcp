@@ -59,11 +59,28 @@ describe("handleGetMarketData", () => {
     expect(result.ticker.symbol).toBe("BTCUSDT");
     expect(result.ticker.price).toBe(30000);
     expect(result.ticker.fundingRate).toBe(0.0001);
+    expect(result.ticker.nextFundingTime).toBe(new Date(1700000000000).toISOString());
+    expect(typeof result.ticker.secondsToNextFunding).toBe("number");
     expect(result.fundingHistory).toHaveLength(2);
     expect(result.klines["60"]).toHaveLength(2);
     expect(result.orderbook.bestBid).toBe(29999);
     expect(result.orderbook.bestAsk).toBe(30001);
     expect(result.orderbook.bids).toBeUndefined();
+  });
+
+  it("returns null nextFundingTime when ticker has no settlement timestamp", async () => {
+    const tickerNoFunding = { list: [{ ...mockTicker.list[0], nextFundingTime: "0" }] };
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce(tickerNoFunding)
+      .mockResolvedValueOnce(mockKline).mockResolvedValueOnce(mockKline)
+      .mockResolvedValueOnce(mockFunding)
+      .mockResolvedValueOnce(mockOrderbook)
+      .mockResolvedValueOnce({ list: [] });
+
+    const result = await handleGetMarketData(client, "BTCUSDT");
+    expect(result.ticker.nextFundingTime).toBeNull();
+    expect(result.ticker.secondsToNextFunding).toBeNull();
   });
 
   it("uses default intervals [60, 240] and klineLimit 24", async () => {

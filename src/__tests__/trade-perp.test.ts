@@ -16,9 +16,10 @@ jest.mock("../client", () => {
 });
 jest.mock("../tools/trade-shared");
 
-import { ensureInstrumentInfo, detectPositionIdx } from "../tools/trade-shared";
+import { ensureInstrumentInfo, detectPositionIdx, fetchFillSnapshot } from "../tools/trade-shared";
 const mockEnsure = ensureInstrumentInfo as jest.Mock;
 const mockDetect = detectPositionIdx as jest.Mock;
+const mockFetchFill = fetchFillSnapshot as jest.Mock;
 
 const MockClient = BybitClient as jest.MockedClass<typeof BybitClient>;
 const mockInst = { tickSize: "0.5", qtyStep: "0.001", minNotionalValue: "5" };
@@ -35,6 +36,7 @@ describe("handlePlacePerp", () => {
   beforeEach(() => {
     mockEnsure.mockResolvedValue(mockInst);
     mockDetect.mockResolvedValue(1);
+    mockFetchFill.mockResolvedValue({ avgFillPrice: 30000, fillStatus: "Filled", cumExecQty: "0.01" });
     positionModeCache["store"].clear();
   });
 
@@ -187,6 +189,68 @@ describe("handlePlacePerp", () => {
     await expect(
       handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 10, leverage: 5, sl: 29000 })
     ).rejects.toMatchObject({ message: expect.stringContaining("auto-retry could not resolve") });
+  });
+
+  it("dry_run effectiveLeverage and notional reflect floored qty, not raw", async () => {
+    // mockInst qtyStep=0.001, price=30000. margin=10, leverage=5.
+    // rawQty = 50/30000 = 0.001666..., floored to 0.001.
+    // actualNotional = 0.001 * 30000 = 30 (not 50)
+    // effectiveLeverage = 30 / 10 = 3.0 (not 5)
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
+
+    const result = await handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 10, leverage: 5, sl: 29000, dry_run: true }) as any;
+
+    expect(result.computedQty).toBe("0.001");
+    expect(parseFloat(result.notional)).toBeCloseTo(30, 2);
+    expect(result.effectiveLeverage).toBeCloseTo(3, 2);
+  });
+
+  it("dry_run wouldSubmit=false when floored qty drops notional below minNotional", async () => {
+    const highMinNotional = { tickSize: "0.5", qtyStep: "0.01", minNotionalValue: "100" };
+    mockEnsure.mockResolvedValue(highMinNotional);
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
+
+    // rawQty = 1*5/30000 = 0.000166..., floored to 0.00 → notional 0 < minNotional 100
+    const result = await handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 1, leverage: 5, sl: 29000, dry_run: true }) as any;
+
+    expect(result.wouldSubmit).toBe(false);
+    expect(result.warnings.some((w: string) => /Notional too low/.test(w))).toBe(true);
+  });
+
+  it("populates avgFillPrice from fetched fill snapshot, not the request reference price", async () => {
+    mockFetchFill.mockResolvedValue({ avgFillPrice: 30450.5, fillStatus: "Filled", cumExecQty: "0.01" });
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker);  // lastPrice=30000
+    (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
+    (client.signedPost as jest.Mock)
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce(mockOrderResult);
+
+    const result = await handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 30, leverage: 10, sl: 29000 }) as any;
+
+    expect(result.avgFillPrice).toBe(30450.5);
+    expect(result.fillStatus).toBe("Filled");
+    expect(result.cumExecQty).toBe("0.01");
+  });
+
+  it("limit order returns fillStatus=New and reference price when not yet filled", async () => {
+    mockFetchFill.mockResolvedValue({ avgFillPrice: 29500, fillStatus: "New", cumExecQty: "0" });
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
+    (client.signedPost as jest.Mock)
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce(mockOrderResult);
+
+    const result = await handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 30, leverage: 10, sl: 29000, orderType: "Limit", price: 29500 }) as any;
+
+    expect(result.fillStatus).toBe("New");
+    expect(result.cumExecQty).toBe("0");
+    expect(result.avgFillPrice).toBe(29500);
   });
 
   it("returns partialSuccess=true if trading-stop fails after order succeeds", async () => {

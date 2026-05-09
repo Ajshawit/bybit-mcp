@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import { BybitClient } from "../client";
 import { floorToStep } from "../util";
-import { ensureInstrumentInfo } from "./trade-shared";
+import { ensureInstrumentInfo, fetchFillSnapshot } from "./trade-shared";
 import {
   TickersResult, WalletBalanceResult, OrderCreateResult,
   PlaceTradeResult, SpotCloseResult, DryRunResult,
@@ -95,12 +95,16 @@ export async function handlePlaceSpot(
 
   const orderRes = await client.signedPost<OrderCreateResult>("/v5/order/create", orderBody);
 
+  const fill = await fetchFillSnapshot(client, "spot", symbol, orderRes.orderId, execPrice);
+
   const result: PlaceTradeResult = {
     orderId: orderRes.orderId,
     orderLinkId: orderRes.orderLinkId,
     symbol,
     filledQty: qty,
-    avgFillPrice: execPrice,
+    avgFillPrice: fill.avgFillPrice,
+    fillStatus: fill.fillStatus,
+    cumExecQty: fill.cumExecQty,
     serverTimestamp: new Date().toISOString(),
     notes,
   };

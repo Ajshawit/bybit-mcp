@@ -15,6 +15,8 @@ export interface MarketTicker {
   fundingRate: number;
   funding8hAgo: number | null;
   funding24hAgo: number | null;
+  nextFundingTime: string | null;
+  secondsToNextFunding: number | null;
   oi: number;
   oiValueUsd: number;
   oi4hAgo: number | null;
@@ -139,6 +141,14 @@ export async function handleGetMarketData(
   const t = tickersRes.list?.[0];
   const fundingList = fundingRes.list ?? [];
 
+  const nextFundingMs = t?.nextFundingTime ? parseInt(t.nextFundingTime, 10) : NaN;
+  const nextFundingTime = Number.isFinite(nextFundingMs) && nextFundingMs > 0
+    ? new Date(nextFundingMs).toISOString()
+    : null;
+  const secondsToNextFunding = Number.isFinite(nextFundingMs) && nextFundingMs > 0
+    ? Math.max(0, Math.round((nextFundingMs - Date.now()) / 1000))
+    : null;
+
   const ticker: MarketTicker = {
     symbol: t?.symbol ?? symbol,
     price: t ? parseFloat(t.lastPrice) : 0,
@@ -146,6 +156,8 @@ export async function handleGetMarketData(
     fundingRate: t ? parseFloat(t.fundingRate) : 0,
     funding8hAgo: fundingList[1] ? parseFloat(fundingList[1].fundingRate) : null,
     funding24hAgo: fundingList[3] ? parseFloat(fundingList[3].fundingRate) : null,
+    nextFundingTime,
+    secondsToNextFunding,
     oi: t ? parseFloat(t.openInterest) : 0,
     oiValueUsd: t ? parseFloat(t.openInterestValue) : 0,
     oi4hAgo: oiList[1] ? parseFloat(oiList[1].openInterest) : null,

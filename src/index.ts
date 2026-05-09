@@ -9,7 +9,7 @@ import { BybitClient } from "./client";
 import { handleGetAccountStatus } from "./tools/account";
 import { handleGetMarketData, handleScanMarket, handleGetOhlc, handleGetMarketRegime, ScanFilter } from "./tools/market";
 import { handlePlaceTrade, handleClosePosition, handleManagePosition } from "./tools/trade";
-import { handleListOpenOrders, handleCancelOrder, handleCancelAllOrders } from "./tools/orders";
+import { handleListOpenOrders, handleCancelOrder, handleGetClosedTrades } from "./tools/orders";
 import {
   handleGetOptionChain, handleGetOptionQuote, handleGetOptionPayoff,
   handleScanOptions, handleGetOptionsRegime, IVSampleStore,
@@ -39,7 +39,7 @@ function createServer(apiKey: string, apiSecret: string, enableOptions: boolean)
       },
       {
         name: "get_market_data",
-        description: "Get comprehensive market data for a single linear perpetual symbol: current price, funding rate, open interest, klines for requested intervals, funding rate history, and top-20 orderbook depth.",
+        description: "Get comprehensive market data for a single linear perpetual symbol: current price, funding rate, next funding settlement time + seconds-to-next-funding (UTC), open interest, klines for requested intervals, funding rate history, and top-20 orderbook depth.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -210,13 +210,16 @@ function createServer(apiKey: string, apiSecret: string, enableOptions: boolean)
         },
       },
       {
-        name: "cancel_all_orders",
-        description: "Cancel all resting orders for a symbol or entire category. CONFIRMATION REQUIRED: (1) Present the cancellation plan — which symbol or category, how many orders will be cancelled (call list_open_orders first). (2) Wait for the user to reply with 'CONFIRM'. (3) Only call this tool after receiving explicit CONFIRM. Never call this tool in the same turn as proposing the cancellation.",
+        name: "get_closed_trades",
+        description: "Fetch realised P&L for recently closed perp positions (linear or inverse). Each trade includes avgEntryPrice, avgExitPrice, closedPnl, fees-net P&L, leverage used, hold duration in seconds, and pnlPct. Use for post-trade journaling and review without manually reconstructing from account-status deltas. Bybit retains up to 7 days by default; use startTime/endTime (ms epoch) to narrow.",
         inputSchema: {
           type: "object" as const,
           properties: {
-            symbol: { type: "string", description: "Cancel only orders for this symbol. Omit to cancel all orders in the category." },
-            category: { type: "string", enum: ["linear", "inverse", "spot", "option"], description: "Default: linear" },
+            symbol: { type: "string", description: "Filter to one symbol e.g. BTCUSDT. Omit to get all closed trades." },
+            category: { type: "string", enum: ["linear", "inverse"], description: "Default: linear" },
+            limit: { type: "number", description: "Max trades to return (1-100). Default: 50" },
+            startTime: { type: "number", description: "Filter start (ms since epoch). Optional." },
+            endTime: { type: "number", description: "Filter end (ms since epoch). Optional." },
           },
           required: [],
         },
@@ -448,10 +451,13 @@ function createServer(apiKey: string, apiSecret: string, enableOptions: boolean)
           break;
         }
 
-        case "cancel_all_orders": {
-          result = await handleCancelAllOrders(client, {
+        case "get_closed_trades": {
+          result = await handleGetClosedTrades(client, {
             symbol: a.symbol as string | undefined,
-            category: a.category as "linear" | "inverse" | "spot" | "option" | undefined,
+            category: a.category as "linear" | "inverse" | undefined,
+            limit: a.limit as number | undefined,
+            startTime: a.startTime as number | undefined,
+            endTime: a.endTime as number | undefined,
           });
           break;
         }

@@ -2,7 +2,7 @@ import crypto from "crypto";
 import { BybitClient, BybitError } from "../client";
 import { positionModeCache } from "../cache";
 import { floorToStep } from "../util";
-import { ensureInstrumentInfo, detectPositionIdx, PerpCategory } from "./trade-shared";
+import { ensureInstrumentInfo, detectPositionIdx, fetchFillSnapshot, PerpCategory } from "./trade-shared";
 import {
   TickersResult, WalletBalanceResult, OrderCreateResult,
   PlaceTradeResult, ClosePositionResult, DryRunResult,
@@ -72,8 +72,15 @@ export async function handlePlacePerp(
     ? margin * leverage * execPrice
     : (margin * leverage) / execPrice;
   const qty = floorToStep(rawQty, inst.qtyStep);
+  const qtyNum = parseFloat(qty);
 
-  const notional = category === "inverse" ? rawQty : rawQty * execPrice;
+  // Notional and effective leverage are derived from the floored qty so the
+  // dry-run preview matches what will actually submit. Using rawQty here would
+  // overstate both fields whenever floor-to-step trims the order.
+  const notional = category === "inverse" ? qtyNum : qtyNum * execPrice;
+  const effectiveLeverage = qtyNum > 0
+    ? (category === "inverse" ? qtyNum / (margin * execPrice) : notional / margin)
+    : 0;
   const minNotional = parseFloat(inst.minNotionalValue);
 
   if (dry_run) {
@@ -95,12 +102,13 @@ export async function handlePlacePerp(
     return {
       dryRun: true, category, symbol, side, orderType,
       computedQty: qty, executionPrice: String(execPrice),
-      notional: notional.toFixed(2), effectiveLeverage: leverage,
+      notional: notional.toFixed(2),
+      effectiveLeverage: Math.round(effectiveLeverage * 100) / 100,
       estimatedLiqPrice: estimatedLiqPrice.toFixed(2), liqPriceApproximate: true,
       marginCoin, marginRequired: String(margin),
       walletBalanceAvailable: freeBalance.toFixed(4), warnings,
       wouldSubmit: margin <= freeBalance
-        && parseFloat(qty) > 0
+        && qtyNum > 0
         && (minNotional === 0 || notional >= minNotional),
       serverTimestamp: new Date().toISOString(),
     };
@@ -151,12 +159,16 @@ export async function handlePlacePerp(
     }
   }
 
+  const fill = await fetchFillSnapshot(client, category, symbol, orderRes!.orderId, execPrice);
+
   const result: PlaceTradeResult = {
     orderId: orderRes!.orderId,
     orderLinkId: orderRes!.orderLinkId,
     symbol,
     filledQty: qty,
-    avgFillPrice: execPrice,
+    avgFillPrice: fill.avgFillPrice,
+    fillStatus: fill.fillStatus,
+    cumExecQty: fill.cumExecQty,
     serverTimestamp: new Date().toISOString(),
     notes,
   };

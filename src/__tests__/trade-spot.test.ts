@@ -4,8 +4,9 @@ import { BybitClient } from "../client";
 jest.mock("../client");
 jest.mock("../tools/trade-shared");
 
-import { ensureInstrumentInfo } from "../tools/trade-shared";
+import { ensureInstrumentInfo, fetchFillSnapshot } from "../tools/trade-shared";
 const mockEnsure = ensureInstrumentInfo as jest.Mock;
+const mockFetchFill = fetchFillSnapshot as jest.Mock;
 
 const MockClient = BybitClient as jest.MockedClass<typeof BybitClient>;
 const mockInst = { tickSize: "0.01", qtyStep: "0.000001", minNotionalValue: "1" };
@@ -21,6 +22,7 @@ const mockOrderResult = { orderId: "spot-order-1", orderLinkId: "mcp-spot-abc" }
 describe("handlePlaceSpot", () => {
   beforeEach(() => {
     mockEnsure.mockResolvedValue(mockInst);
+    mockFetchFill.mockResolvedValue({ avgFillPrice: 30000, fillStatus: "Filled", cumExecQty: "0.01" });
   });
 
   it("computes qty = floor(margin / price, qtyStep)", async () => {

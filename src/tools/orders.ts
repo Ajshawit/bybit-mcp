@@ -100,18 +100,107 @@ export async function handleCancelOrder(
   };
 }
 
-export async function handleCancelAllOrders(
-  client: BybitClient,
-  params: { symbol?: string; category?: OrderCategory }
-): Promise<{ cancelledCount: number; cancelled: BybitCancelledItem[]; serverTimestamp: string }> {
-  const { symbol, category = "linear" } = params;
-  const body: Record<string, string> = { category };
-  if (symbol) body.symbol = symbol;
+export type ClosedPnlCategory = "linear" | "inverse";
 
-  const res = await client.signedPost<{ list: BybitCancelledItem[] }>("/v5/order/cancel-all", body);
+interface BybitClosedPnl {
+  symbol: string;
+  side: "Buy" | "Sell";
+  closedPnl: string;
+  avgEntryPrice: string;
+  avgExitPrice: string;
+  qty: string;
+  closedSize: string;
+  cumEntryValue: string;
+  cumExitValue: string;
+  leverage: string;
+  createdTime: string;
+  updatedTime: string;
+  orderType: string;
+  execType: string;
+}
+
+interface BybitClosedPnlResult {
+  list: BybitClosedPnl[];
+  category: string;
+  nextPageCursor?: string;
+}
+
+export interface ClosedTrade {
+  symbol: string;
+  // Bybit returns the closing-order side; the position itself was the
+  // opposite. We translate so the caller sees the position direction.
+  positionSide: "LONG" | "SHORT";
+  closedPnl: number;
+  avgEntryPrice: number;
+  avgExitPrice: number;
+  qty: number;
+  entryValue: number;
+  exitValue: number;
+  leverage: number;
+  openedAt: string;
+  closedAt: string;
+  holdSeconds: number;
+  pnlPct: number;
+  orderType: string;
+  execType: string;
+}
+
+function mapClosedPnl(p: BybitClosedPnl): ClosedTrade {
+  const positionSide: "LONG" | "SHORT" = p.side === "Sell" ? "LONG" : "SHORT";
+  const closedPnl = parseFloat(p.closedPnl);
+  const cumEntryValue = parseFloat(p.cumEntryValue);
+  const createdMs = parseInt(p.createdTime, 10);
+  const updatedMs = parseInt(p.updatedTime, 10);
+  const holdSeconds = Math.max(0, Math.round((updatedMs - createdMs) / 1000));
+  const pnlPct = cumEntryValue > 0 ? (closedPnl / cumEntryValue) * 100 : 0;
   return {
-    cancelledCount: res.list.length,
-    cancelled: res.list,
+    symbol: p.symbol,
+    positionSide,
+    closedPnl: Math.round(closedPnl * 10000) / 10000,
+    avgEntryPrice: parseFloat(p.avgEntryPrice),
+    avgExitPrice: parseFloat(p.avgExitPrice),
+    qty: parseFloat(p.closedSize || p.qty),
+    entryValue: cumEntryValue,
+    exitValue: parseFloat(p.cumExitValue),
+    leverage: parseFloat(p.leverage || "0"),
+    openedAt: Number.isFinite(createdMs) ? new Date(createdMs).toISOString() : "",
+    closedAt: Number.isFinite(updatedMs) ? new Date(updatedMs).toISOString() : "",
+    holdSeconds,
+    pnlPct: Math.round(pnlPct * 100) / 100,
+    orderType: p.orderType,
+    execType: p.execType,
+  };
+}
+
+export async function handleGetClosedTrades(
+  client: BybitClient,
+  params: {
+    symbol?: string;
+    category?: ClosedPnlCategory;
+    limit?: number;
+    startTime?: number;
+    endTime?: number;
+  }
+): Promise<{
+  trades: ClosedTrade[];
+  count: number;
+  totalPnl: number;
+  serverTimestamp: string;
+}> {
+  const { symbol, category = "linear", limit = 50, startTime, endTime } = params;
+  const query: Record<string, string> = { category, limit: String(Math.min(Math.max(limit, 1), 100)) };
+  if (symbol) query.symbol = symbol;
+  if (startTime) query.startTime = String(startTime);
+  if (endTime) query.endTime = String(endTime);
+
+  const res = await client.signedGet<BybitClosedPnlResult>("/v5/position/closed-pnl", query);
+  const trades = (res.list ?? []).map(mapClosedPnl);
+  const totalPnl = trades.reduce((sum, t) => sum + t.closedPnl, 0);
+
+  return {
+    trades,
+    count: trades.length,
+    totalPnl: Math.round(totalPnl * 10000) / 10000,
     serverTimestamp: new Date().toISOString(),
   };
 }
