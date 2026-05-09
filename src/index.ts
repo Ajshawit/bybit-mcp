@@ -7,7 +7,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { BybitClient } from "./client";
 import { handleGetAccountStatus } from "./tools/account";
-import { handleGetMarketData, handleScanMarket, handleGetOhlc, handleGetMarketRegime, ScanFilter } from "./tools/market";
+import { handleGetMarketData, handleScanMarket, handleGetOhlc, handleGetMarketRegime, handleListTradfiInstruments, ScanFilter } from "./tools/market";
 import { handlePlaceTrade, handleClosePosition, handleManagePosition } from "./tools/trade";
 import { handleListOpenOrders, handleCancelOrder, handleGetClosedTrades } from "./tools/orders";
 import {
@@ -222,6 +222,24 @@ function createServer(apiKey: string, apiSecret: string, enableOptions: boolean)
             endTime: { type: "number", description: "Filter end (ms since epoch). Optional." },
           },
           required: [],
+        },
+      },
+      {
+        name: "list_tradfi_instruments",
+        description: "Discover available TradFi instruments on Bybit. Returns xStocks (tokenized equities e.g. TSLAXUSDT — trade with category=spot), stock perpetuals (e.g. TSLAPUSDT — trade with category=linear), and commodity perpetuals (e.g. XAUUSDT gold, XAGUSDT silver, CLUSDT crude oil — trade with category=linear). Always call this before the first TradFi trade in a session to confirm exact symbols and constraints (tickSize, minOrderQty, maxLeverage).",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            type: {
+              type: "string",
+              enum: ["xstocks", "stock_perps", "commodity_perps", "all"],
+              description: "Which TradFi asset type to list. Default: all",
+            },
+            search: {
+              type: "string",
+              description: "Optional filter — case-insensitive substring match on symbol or base coin. E.g. 'TSLA' returns TSLAXUSDT and TSLAPUSDT.",
+            },
+          },
         },
       },
       ...(ENABLE_OPTIONS ? [
@@ -539,6 +557,16 @@ function createServer(apiKey: string, apiSecret: string, enableOptions: boolean)
             dry_run: a.dry_run as boolean | undefined,
           });
           result = data;
+          break;
+        }
+
+        case "list_tradfi_instruments": {
+          const data = await handleListTradfiInstruments(
+            client,
+            (a.type as "xstocks" | "stock_perps" | "commodity_perps" | "all" | undefined) ?? "all",
+            a.search as string | undefined
+          );
+          result = { ...data, serverTimestamp: new Date().toISOString() };
           break;
         }
 
