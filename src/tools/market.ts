@@ -683,5 +683,9 @@ export async function handleListTradfiInstruments(
   const stock_perps = filterBySearch(stockPerpsRes.list.map((r) => mapInstrument(r, "stock_perp")));
   const commodity_perps = filterBySearch(commodityPerpsRes.list.map((r) => mapInstrument(r, "commodity_perp")));
 
-  return { xstocks, stock_perps, commodity_perps, total: xstocks.length + stock_perps.length + commodity_perps.length };
+  const hasPerps = stock_perps.length > 0 || commodity_perps.length > 0;
+  const dataNote = hasPerps
+    ? "Signal quality note: price on stock/commodity perps is index-derived and tracks the real market. However, funding rate, open interest, and volume reflect Bybit's TradFi market only — not real-world institutional flows, options OI, or NYSE/CME positioning. These signals are meaningful as Bybit-specific positioning indicators, not as broader market sentiment."
+    : undefined;
+  return { xstocks, stock_perps, commodity_perps, total: xstocks.length + stock_perps.length + commodity_perps.length, dataNote };
 }
