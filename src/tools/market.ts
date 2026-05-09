@@ -9,7 +9,7 @@ import {
   TradfiInstrument,
   TradfiInstrumentsResult,
 } from "./types";
-import { concurrentMap } from "../util";
+import { concurrentMap, isNyseOpen, NyseStatus } from "../util";
 
 export interface MarketTicker {
   symbol: string;
@@ -88,6 +88,7 @@ export interface MarketDataResult {
     bids?: [number, number][];
     asks?: [number, number][];
   };
+  nyseStatus?: NyseStatus;
 }
 
 export interface OhlcResult {
@@ -104,8 +105,69 @@ export async function handleGetMarketData(
   klineIntervals = ["60", "240"],
   klineLimit = 24,
   fundingHistoryLimit = 8,
-  includeOrderbook = false
+  includeOrderbook = false,
+  category: "linear" | "spot" = "linear"
 ): Promise<MarketDataResult> {
+  if (category === "spot") {
+    const spotResults = await Promise.all([
+      client.publicGet<TickersResult>("/v5/market/tickers", { category: "spot", symbol }),
+      ...klineIntervals.map((interval) =>
+        client.publicGet<KlineResult>("/v5/market/kline", {
+          category: "spot", symbol, interval, limit: String(klineLimit),
+        })
+      ),
+      client.publicGet<OrderbookEntry>("/v5/market/orderbook", {
+        category: "spot", symbol, limit: "20",
+      }),
+    ]);
+
+    const spotTicker = (spotResults[0] as TickersResult).list?.[0];
+    const spotKlineResults = spotResults.slice(1, 1 + klineIntervals.length) as KlineResult[];
+    const spotObRes = spotResults[1 + klineIntervals.length] as OrderbookEntry;
+
+    const ticker: MarketTicker = {
+      symbol: spotTicker?.symbol ?? symbol,
+      price: spotTicker ? parseFloat(spotTicker.lastPrice) : 0,
+      price24hPct: spotTicker ? parseFloat(spotTicker.price24hPcnt) * 100 : 0,
+      fundingRate: 0,
+      funding8hAgo: null,
+      funding24hAgo: null,
+      nextFundingTime: null,
+      secondsToNextFunding: null,
+      oi: 0,
+      oiValueUsd: 0,
+      oi4hAgo: null,
+      oi24hAgo: null,
+      volume24hUsd: spotTicker ? parseFloat(spotTicker.turnover24h) : 0,
+      bid: spotTicker ? parseFloat(spotTicker.bid1Price) : 0,
+      ask: spotTicker ? parseFloat(spotTicker.ask1Price) : 0,
+    };
+
+    const klines: Record<string, MarketKlineBar[]> = {};
+    klineIntervals.forEach((interval, i) => {
+      klines[interval] = (spotKlineResults[i]?.list ?? []).map(
+        ([time, open, high, low, close, volume]) => ({
+          time: parseInt(time), open: parseFloat(open), high: parseFloat(high),
+          low: parseFloat(low), close: parseFloat(close), volume: parseFloat(volume),
+        })
+      );
+    });
+
+    const spotBids = (spotObRes.b ?? []).map(([p, s]) => [parseFloat(p), parseFloat(s)] as [number, number]);
+    const spotAsks = (spotObRes.a ?? []).map(([p, s]) => [parseFloat(p), parseFloat(s)] as [number, number]);
+    const spotBestBid = spotBids[0]?.[0] ?? 0;
+    const spotBestAsk = spotAsks[0]?.[0] ?? 0;
+    const spotMid = spotBestBid > 0 && spotBestAsk > 0 ? (spotBestBid + spotBestAsk) / 2 : 0;
+    const spotSpread = spotBestAsk - spotBestBid;
+    const spotSpreadPct = spotMid > 0 ? spotSpread / spotMid * 100 : 0;
+    const orderbook = includeOrderbook
+      ? { bestBid: spotBestBid, bestAsk: spotBestAsk, spread: spotSpread, spreadPct: spotSpreadPct, midPrice: spotMid, bids: spotBids, asks: spotAsks }
+      : { bestBid: spotBestBid, bestAsk: spotBestAsk, spread: spotSpread, spreadPct: spotSpreadPct, midPrice: spotMid };
+
+    return { ticker, klines, fundingHistory: [], orderbook, nyseStatus: isNyseOpen() };
+  }
+
+  // Linear/inverse perp path (unchanged below)
   const allResults = await Promise.all([
     client.publicGet<TickersResult>("/v5/market/tickers", { category: "linear", symbol }),
     ...klineIntervals.map((interval) =>

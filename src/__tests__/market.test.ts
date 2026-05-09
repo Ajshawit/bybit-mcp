@@ -95,6 +95,72 @@ describe("handleGetMarketData", () => {
     expect(klineCalls.some(([, p]: [string, Record<string, string>]) => p.interval === "240")).toBe(true);
     expect(klineCalls[0][1].limit).toBe("24");
   });
+
+  it("xStock path: skips funding/OI and includes nyseStatus when category=spot", async () => {
+    const xstockTicker = {
+      list: [{
+        symbol: "TSLAXUSDT",
+        lastPrice: "185.50",
+        price24hPcnt: "0.012",
+        fundingRate: "",
+        nextFundingTime: "",
+        openInterest: "",
+        openInterestValue: "",
+        volume24h: "50000",
+        turnover24h: "9275000",
+        highPrice24h: "190.00",
+        lowPrice24h: "180.00",
+        prevPrice24h: "183.00",
+        bid1Price: "185.40",
+        ask1Price: "185.60",
+      }],
+    };
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce(xstockTicker)  // tickers (spot)
+      .mockResolvedValueOnce(mockKline)     // kline interval 60
+      .mockResolvedValueOnce(mockKline)     // kline interval 240
+      .mockResolvedValueOnce(mockOrderbook); // orderbook
+
+    const result = await handleGetMarketData(client, "TSLAXUSDT", ["60", "240"], 24, 8, false, "spot");
+
+    expect(result.ticker.symbol).toBe("TSLAXUSDT");
+    expect(result.ticker.price).toBe(185.5);
+    expect(result.ticker.fundingRate).toBe(0);
+    expect(result.ticker.nextFundingTime).toBeNull();
+    expect(result.ticker.oi).toBe(0);
+    expect(result.fundingHistory).toEqual([]);
+    expect(result.nyseStatus).toBeDefined();
+    expect(typeof result.nyseStatus!.open).toBe("boolean");
+    expect(typeof result.nyseStatus!.session).toBe("string");
+    // 4 publicGet calls: tickers + 2 klines + orderbook (no funding, no OI)
+    expect((client.publicGet as jest.Mock).mock.calls).toHaveLength(4);
+  });
+
+  it("xStock path: passes category=spot to all API calls", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue({ list: [], b: [], a: [], s: "" });
+
+    await handleGetMarketData(client, "TSLAXUSDT", ["60"], 24, 8, false, "spot");
+
+    const calls = (client.publicGet as jest.Mock).mock.calls;
+    expect(calls.every(([, p]: [string, Record<string, string>]) => p.category === "spot")).toBe(true);
+  });
+
+  it("linear path: still works unchanged when category omitted", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce(mockTicker)
+      .mockResolvedValueOnce(mockKline)
+      .mockResolvedValueOnce(mockKline)
+      .mockResolvedValueOnce(mockFunding)
+      .mockResolvedValueOnce(mockOrderbook)
+      .mockResolvedValueOnce({ list: [] });
+
+    const result = await handleGetMarketData(client, "BTCUSDT");
+    expect(result.ticker.fundingRate).toBe(0.0001);
+    expect(result.nyseStatus).toBeUndefined();
+  });
 });
 
 describe("scan_market oi_divergence", () => {
