@@ -207,6 +207,32 @@ describe("handlePlacePerp", () => {
     expect(result.effectiveLeverage).toBeCloseTo(3, 2);
   });
 
+  it("dry_run sets qtyRoundedDown=true and qtyStep when floorToStep truncates qty", async () => {
+    // mockInst qtyStep=0.001, price=30000. margin=20, leverage=5.
+    // rawQty = 100/30000 = 0.003333..., floored to 0.003 → rounded down
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
+
+    const result = await handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 20, leverage: 5, sl: 29000, dry_run: true }) as any;
+
+    expect(result.qtyRoundedDown).toBe(true);
+    expect(result.qtyStep).toBe("0.001");
+    expect(parseFloat(result.computedQty)).toBeLessThan(100 / 30000);
+  });
+
+  it("dry_run sets qtyRoundedDown=false when qty lands exactly on step boundary", async () => {
+    // margin=30, leverage=10, price=30000: rawQty = 300/30000 = 0.01 exactly (multiple of 0.001)
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
+
+    const result = await handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 30, leverage: 10, sl: 29000, dry_run: true }) as any;
+
+    expect(result.qtyRoundedDown).toBe(false);
+    expect(result.qtyStep).toBe("0.001");
+  });
+
   it("dry_run wouldSubmit=false when floored qty drops notional below minNotional", async () => {
     const highMinNotional = { tickSize: "0.5", qtyStep: "0.01", minNotionalValue: "100" };
     mockEnsure.mockResolvedValue(highMinNotional);

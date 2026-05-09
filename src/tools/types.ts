@@ -199,6 +199,8 @@ export interface DryRunResult {
   warnings: string[];
   wouldSubmit: boolean;
   serverTimestamp: string;
+  qtyRoundedDown?: boolean;
+  qtyStep?: string;
 }
 
 // Raw API response type for instruments-info TradFi discovery queries.

@@ -54,7 +54,8 @@ export async function handlePlaceSpot(
   if (!usdtCoin) throw new Error("USDT coin not found in wallet balance response");
   const freeUsdt = parseFloat(usdtCoin.walletBalance) - parseFloat(usdtCoin.totalPositionIM);
 
-  const qty = floorToStep(margin / execPrice, inst.qtyStep);
+  const rawQtyNum = margin / execPrice;
+  const qty = floorToStep(rawQtyNum, inst.qtyStep);
 
   if (dry_run) {
     const warnings: string[] = [];
@@ -74,6 +75,8 @@ export async function handlePlaceSpot(
       marginRequired: String(margin), walletBalanceAvailable: freeUsdt.toFixed(2),
       warnings, wouldSubmit: margin <= freeUsdt && parseFloat(qty) > 0,
       serverTimestamp: new Date().toISOString(),
+      qtyRoundedDown: parseFloat(qty) < rawQtyNum,
+      qtyStep: inst.qtyStep,
     };
   }
 

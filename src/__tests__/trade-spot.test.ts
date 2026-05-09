@@ -112,6 +112,35 @@ describe("handlePlaceSpot", () => {
     expect(client.signedPost).not.toHaveBeenCalled();
   });
 
+  it("dry_run sets qtyRoundedDown=true and qtyStep when floorToStep truncates qty", async () => {
+    // Use a coarser qtyStep so rounding is forced: qtyStep=0.01, price=711.44, margin=20
+    // rawQtyNum = 20 / 711.44 = 0.028112..., floored to 0.02 with step=0.01 → rounded down
+    const coarseInst = { tickSize: "0.01", qtyStep: "0.01", minNotionalValue: "1" };
+    mockEnsure.mockResolvedValueOnce(coarseInst);
+    const ticker711 = { list: [{ lastPrice: "711.44", turnover24h: "50000000" }] };
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(ticker711);
+    (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
+
+    const result = await handlePlaceSpot(client, { symbol: "SOLUSDT", side: "Buy", margin: 20, category: "spot", dry_run: true }) as any;
+
+    expect(result.qtyRoundedDown).toBe(true);
+    expect(result.qtyStep).toBe("0.01");
+    expect(parseFloat(result.computedQty)).toBeLessThan(20 / 711.44);
+  });
+
+  it("dry_run sets qtyRoundedDown=false when qty lands exactly on step boundary", async () => {
+    // price=30000, margin=300, qtyStep=0.000001: rawQty = 300/30000 = 0.01 exactly
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
+
+    const result = await handlePlaceSpot(client, { symbol: "BTCUSDT", side: "Buy", margin: 300, category: "spot", dry_run: true }) as any;
+
+    expect(result.qtyRoundedDown).toBe(false);
+    expect(result.qtyStep).toBe("0.000001");
+  });
+
   it("throws when sl is provided for spot", async () => {
     const client = new MockClient("k", "s", "u");
     await expect(

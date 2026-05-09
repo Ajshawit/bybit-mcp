@@ -111,6 +111,8 @@ export async function handlePlacePerp(
         && qtyNum > 0
         && (minNotional === 0 || notional >= minNotional),
       serverTimestamp: new Date().toISOString(),
+      qtyRoundedDown: qtyNum < rawQty,
+      qtyStep: inst.qtyStep,
     };
   }
 
