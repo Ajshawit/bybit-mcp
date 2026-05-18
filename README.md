@@ -162,7 +162,7 @@ Then use `node /absolute/path/to/bybit-mcp/dist/index.js` instead of `npx ajs-by
 |----------|----------|---------|-------------|
 | `BYBIT_API_KEY` | Yes | - | Bybit V5 API key |
 | `BYBIT_API_SECRET` | Yes | - | Bybit V5 API secret |
-| `BYBIT_TESTNET` | No | `false` | Use Bybit testnet API (`api-testnet.bybit.com`). **Recommended for first-time setup.** |
+| `BYBIT_TESTNET` | No | `true` | Use Bybit testnet API (`api-testnet.bybit.com`). Defaults to testnet; set `BYBIT_TESTNET=false` to trade on mainnet. **Keep the default for first-time setup.** |
 | `ENABLE_OPTIONS` | No | `false` | Enable the 4 options tools (`options_market`, `get_option_payoff`, `place_option_trade`, `close_option_position`) |
 | `OPTIONS_ALLOW_NAKED_SHORT` | No | `false` | Allow selling options without an offsetting long position. Naked short options carry unlimited or very large maximum loss. |
 | `OPTIONS_MAX_PREMIUM_PCT_BALANCE` | No | none | Block option buys where premium exceeds N% of USDC balance |
