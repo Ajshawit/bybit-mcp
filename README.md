@@ -2,9 +2,9 @@
 
 **Bybit V5 trading and market analytics for Claude Desktop, Claude Code, and Cursor.** Linear and inverse perpetuals, spot, options (Greeks, IV scanning), and TradFi (xStocks, stock & commodity perps) — with market regime detection, OI divergence scanning, post-trade journaling, and confirmation-based safety rails.
 
-[![npm version](https://img.shields.io/npm/v/ajs-bybit-quant-mcp.svg?color=blue)](https://www.npmjs.com/package/ajs-bybit-quant-mcp)
-[![npm downloads](https://img.shields.io/npm/dm/ajs-bybit-quant-mcp.svg)](https://www.npmjs.com/package/ajs-bybit-quant-mcp)
-[![smithery badge](https://smithery.ai/badge/ajs-bybit-quant-mcp)](https://smithery.ai/server/ajs-bybit-quant-mcp)
+[![npm version](https://img.shields.io/npm/v/ajs-bybit-mcp.svg?color=blue)](https://www.npmjs.com/package/ajs-bybit-mcp)
+[![npm downloads](https://img.shields.io/npm/dm/ajs-bybit-mcp.svg)](https://www.npmjs.com/package/ajs-bybit-mcp)
+[![smithery badge](https://smithery.ai/badge/ajs-bybit-mcp)](https://smithery.ai/server/ajs-bybit-mcp)
 [![tests](https://img.shields.io/badge/tests-234%20passing-brightgreen)](./src)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -17,7 +17,7 @@
 
 There are several Bybit MCPs. Most are thin V5 REST wrappers with one tool per endpoint, no analytics, no options, and no TradFi support. This one is built for traders making actual decisions, not just querying the API.
 
-| | `ajs-bybit-quant-mcp` (this repo) | Typical Bybit MCP |
+| | `ajs-bybit-mcp` (this repo) | Typical Bybit MCP |
 |---|---|---|
 | **Options trading** | Full stack: chains, Greeks, IV scanning, skew and term structure, payoff math, safe place/close | Not supported |
 | **TradFi** | xStocks (tokenized equities), stock perps, commodity perps, with NYSE-hours awareness | Not supported |
@@ -126,7 +126,7 @@ Add to your Claude Desktop config file:
   "mcpServers": {
     "bybit-quant": {
       "command": "npx",
-      "args": ["-y", "ajs-bybit-quant-mcp"],
+      "args": ["-y", "ajs-bybit-mcp"],
       "env": {
         "BYBIT_API_KEY": "your_api_key",
         "BYBIT_API_SECRET": "your_api_secret",
@@ -152,7 +152,7 @@ npm install
 npm run build
 ```
 
-Then use `node /absolute/path/to/bybit-mcp/dist/index.js` instead of `npx ajs-bybit-quant-mcp` in the config above.
+Then use `node /absolute/path/to/bybit-mcp/dist/index.js` instead of `npx ajs-bybit-mcp` in the config above.
 
 ---
 
