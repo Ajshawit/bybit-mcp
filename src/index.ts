@@ -15,14 +15,28 @@ import {
   handleScanOptions, handleGetOptionsRegime, IVSampleStore,
   handlePlaceOptionTrade, handleCloseOptionPosition,
 } from "./tools/options/index.js";
+import {
+  handleGetRfqList, handleGetRfqRealtime, handleGetQuoteList,
+  handleGetQuoteRealtime, handleGetRfqTradeList,
+  checkRfqEligibility, assessComboRisk,
+} from "./tools/rfq/index.js";
+import type {
+  RfqListTraderType, RfqQuoteTraderType, RfqStatus, RfqTradeStatus, RiskLeg,
+} from "./tools/rfq/index.js";
 
 const MAINNET_URL = "https://api.bybit.com";
 const TESTNET_URL = "https://api-testnet.bybit.com";
 
-function createServer(apiKey: string, apiSecret: string, enableOptions: boolean): Server {
+function createServer(
+  apiKey: string,
+  apiSecret: string,
+  enableOptions: boolean,
+  enableRfq: boolean
+): Server {
   const baseUrl = process.env.BYBIT_TESTNET !== "false" ? TESTNET_URL : MAINNET_URL;
   const client = new BybitClient(apiKey, apiSecret, baseUrl);
   const ENABLE_OPTIONS = enableOptions;
+  const ENABLE_RFQ = enableRfq;
   const ivStore = ENABLE_OPTIONS ? new IVSampleStore() : null;
 
   const server = new Server(
@@ -354,6 +368,62 @@ function createServer(apiKey: string, apiSecret: string, enableOptions: boolean)
           },
         },
       ] : []),
+      ...(ENABLE_RFQ ? [
+        {
+          name: "rfq_query",
+          description: "Read-only Bybit RFQ / block-trade queries (taker side). action='rfq_list': historical RFQs (paginated). action='rfq_realtime': currently active RFQs. action='quote_list': historical LP quotes (paginated). action='quote_realtime': live LP quotes for an RFQ — the poll path while waiting for makers. action='trade_list': executed RFQ trades. All actions are account-scoped and read-only; no orders are placed. NOTE: RFQ requires a UTA 2.0 + portfolio-margin account; use check_rfq_eligibility first.",
+          inputSchema: {
+            type: "object" as const,
+            properties: {
+              action: { type: "string", enum: ["rfq_list", "rfq_realtime", "quote_list", "quote_realtime", "trade_list"] },
+              rfqId: { type: "string" },
+              rfqLinkId: { type: "string" },
+              quoteId: { type: "string", description: "For quote_* and trade_list" },
+              quoteLinkId: { type: "string", description: "For quote_* and trade_list" },
+              traderType: { type: "string", description: "rfq_list: 'quoter'|'request'; quote_*: 'quote'|'request'" },
+              status: { type: "string", description: "rfq_list/quote_list: Active|Canceled|PendingFill|Filled|Expired|Failed. trade_list: Filled|Rejected" },
+              limit: { type: "number", description: "History actions only" },
+              cursor: { type: "string", description: "History pagination cursor" },
+            },
+            required: ["action"],
+          },
+        },
+        {
+          name: "check_rfq_eligibility",
+          description: "Pre-flight check for Bybit RFQ access. Calls /v5/account/info and reports whether the account meets RFQ hard requirements: UTA 2.0 (unifiedMarginStatus 5 or 6), PORTFOLIO_MARGIN, and — if notionalUsd is supplied — the 10,000 USD per-RFQ minimum. Returns { eligible, reasons[], accountInfo }. reasons[] explains every failed gate. Run this before attempting any RFQ workflow.",
+          inputSchema: {
+            type: "object" as const,
+            properties: {
+              notionalUsd: { type: "number", description: "Optional planned RFQ notional in USD; checked against the 10,000 USD minimum" },
+            },
+          },
+        },
+        {
+          name: "assess_combo_risk",
+          description: "Pure-math combo risk assessment for a multi-leg RFQ structure — no API call. Models max loss only when EVERY leg is an option (reuses the option payoff engine). Any linear/spot leg, missing spot, or unpriced leg => modeled:false, maxLossUsd:null, treated as uncovered. Returns { modeled, maxLossUsd, maxProfit, breakevens, uncovered, allowed, reasons[] }. Uncovered/unmodeled combos are blocked unless RFQ_ALLOW_UNCOVERED=true (or OPTIONS_ALLOW_NAKED_SHORT=true). Risk-defined spreads are correctly NOT flagged.",
+          inputSchema: {
+            type: "object" as const,
+            properties: {
+              legs: {
+                type: "array",
+                items: {
+                  type: "object" as const,
+                  properties: {
+                    category: { type: "string", enum: ["spot", "linear", "option"] },
+                    symbol: { type: "string" },
+                    side: { type: "string", enum: ["buy", "sell"] },
+                    qty: { type: "number" },
+                    price: { type: "number", description: "Per-unit price/premium; required for option payoff modelling" },
+                  },
+                  required: ["category", "symbol", "side", "qty"],
+                },
+              },
+              currentSpot: { type: "number", description: "Underlying spot; required to model an all-option combo" },
+            },
+            required: ["legs"],
+          },
+        },
+      ] : []),
     ],
   }));
 
@@ -576,6 +646,85 @@ function createServer(apiKey: string, apiSecret: string, enableOptions: boolean)
           break;
         }
 
+        case "rfq_query": {
+          if (!ENABLE_RFQ) throw new Error("RFQ module not enabled");
+          const action = a.action as string;
+          let data: unknown;
+          switch (action) {
+            case "rfq_list":
+              data = await handleGetRfqList(client, {
+                rfqId: a.rfqId as string | undefined,
+                rfqLinkId: a.rfqLinkId as string | undefined,
+                traderType: a.traderType as RfqListTraderType | undefined,
+                status: a.status as RfqStatus | undefined,
+                limit: a.limit as number | undefined,
+                cursor: a.cursor as string | undefined,
+              });
+              break;
+            case "rfq_realtime":
+              data = await handleGetRfqRealtime(client, {
+                rfqId: a.rfqId as string | undefined,
+                rfqLinkId: a.rfqLinkId as string | undefined,
+                traderType: a.traderType as RfqQuoteTraderType | undefined,
+              });
+              break;
+            case "quote_list":
+              data = await handleGetQuoteList(client, {
+                rfqId: a.rfqId as string | undefined,
+                quoteId: a.quoteId as string | undefined,
+                quoteLinkId: a.quoteLinkId as string | undefined,
+                traderType: a.traderType as RfqQuoteTraderType | undefined,
+                status: a.status as RfqStatus | undefined,
+                limit: a.limit as number | undefined,
+                cursor: a.cursor as string | undefined,
+              });
+              break;
+            case "quote_realtime":
+              data = await handleGetQuoteRealtime(client, {
+                rfqId: a.rfqId as string | undefined,
+                quoteId: a.quoteId as string | undefined,
+                quoteLinkId: a.quoteLinkId as string | undefined,
+                traderType: a.traderType as RfqQuoteTraderType | undefined,
+              });
+              break;
+            case "trade_list":
+              data = await handleGetRfqTradeList(client, {
+                rfqId: a.rfqId as string | undefined,
+                rfqLinkId: a.rfqLinkId as string | undefined,
+                quoteId: a.quoteId as string | undefined,
+                quoteLinkId: a.quoteLinkId as string | undefined,
+                status: a.status as RfqTradeStatus | undefined,
+                limit: a.limit as number | undefined,
+                cursor: a.cursor as string | undefined,
+              });
+              break;
+            default:
+              throw new Error(`Unknown rfq_query action: ${action}`);
+          }
+          result = { ...(data as object), serverTimestamp: new Date().toISOString() };
+          break;
+        }
+
+        case "check_rfq_eligibility": {
+          if (!ENABLE_RFQ) throw new Error("RFQ module not enabled");
+          const data = await checkRfqEligibility(
+            client,
+            a.notionalUsd as number | undefined
+          );
+          result = { ...data, serverTimestamp: new Date().toISOString() };
+          break;
+        }
+
+        case "assess_combo_risk": {
+          if (!ENABLE_RFQ) throw new Error("RFQ module not enabled");
+          const data = assessComboRisk({
+            legs: a.legs as RiskLeg[],
+            currentSpot: a.currentSpot as number | undefined,
+          });
+          result = { ...data, serverTimestamp: new Date().toISOString() };
+          break;
+        }
+
         default:
           throw new Error(`Unknown tool: ${name}`);
       }
@@ -594,7 +743,7 @@ function createServer(apiKey: string, apiSecret: string, enableOptions: boolean)
 }
 
 export function createSandboxServer(): Server {
-  return createServer("sandbox-key", "sandbox-secret", true);
+  return createServer("sandbox-key", "sandbox-secret", true, true);
 }
 
 if (require.main === module) {
@@ -605,7 +754,8 @@ if (require.main === module) {
     process.exit(1);
   }
   const enableOptions = process.env.ENABLE_OPTIONS === "true";
-  const server = createServer(apiKey, apiSecret, enableOptions);
+  const enableRfq = process.env.ENABLE_RFQ === "true";
+  const server = createServer(apiKey, apiSecret, enableOptions, enableRfq);
 
   async function main() {
     const transport = new StdioServerTransport();
