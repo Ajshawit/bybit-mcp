@@ -232,3 +232,86 @@ export interface ComboRiskResult {
   allowed: boolean;
   reasons: string[];
 }
+
+// --- Write surface (Phase 3) ---
+//
+// Ported verbatim from the verified typed client request/response shapes
+// (tiagosiebler/bybit-api request|response/v5-rfq.ts). NOTE: the create-rfq
+// leg category set includes "inverse" (wider than the read-side RfqCategory).
+
+export type CreateRfqLegCategory = "spot" | "linear" | "inverse" | "option";
+
+export interface CreateRfqLeg {
+  category: CreateRfqLegCategory;
+  symbol: string;
+  side: RfqSide;
+  qty: string;
+  isLeverage?: boolean;
+}
+
+export interface CreateRfqParams {
+  counterparties: string[];
+  list: CreateRfqLeg[];
+  rfqLinkId?: string;
+  anonymous?: boolean;
+  strategyType?: string;
+  // Caller-supplied estimate of the RFQ's USD notional, used only for the
+  // >=10,000 USD eligibility gate. We do NOT fabricate notional from prices
+  // we cannot reliably obtain for every leg category.
+  estimatedNotionalUsd?: number;
+  dry_run?: boolean;
+}
+
+export interface CreateRfqResult {
+  dryRun?: false;
+  rfqId: string;
+  rfqLinkId: string;
+  status: "Active" | "Canceled" | "Filled" | "Expired" | "Failed";
+  expiresAt: string;
+  deskCode: string;
+  serverTimestamp: string;
+}
+
+export interface ExecuteQuoteParams {
+  rfqId: string;
+  quoteId: string;
+  quoteSide: RfqSide;
+  dry_run?: boolean;
+}
+
+export interface ExecuteQuoteResult {
+  dryRun?: false;
+  rfqId: string;
+  rfqLinkId: string;
+  quoteId: string;
+  status: "Processing" | "Rejected";
+  rejectParty: string;
+  serverTimestamp: string;
+}
+
+export interface CancelRfqParams {
+  rfqId?: string;
+  rfqLinkId?: string;
+}
+
+export interface CancelRfqResult {
+  rfqId: string;
+  rfqLinkId: string;
+  serverTimestamp: string;
+}
+
+// Returned by create/execute when dry_run (default) — nothing was submitted.
+export interface RfqWriteDryRunResult {
+  dryRun: true;
+  action: "create_rfq" | "execute_quote";
+  wouldSubmit: boolean; // false when a pre-flight gate would block submission
+  eligibility?: RfqEligibilityResult;
+  risk?: ComboRiskResult;
+  // For execute_quote: the live quote being targeted, so a human CONFIRM
+  // sees the actual legs/prices — not just opaque IDs. Undefined if the
+  // quote could not be fetched (a warning is added instead).
+  quote?: RfqQuoteItem;
+  warnings: string[];
+  request: Record<string, unknown>; // exact body that would be POSTed
+  serverTimestamp: string;
+}

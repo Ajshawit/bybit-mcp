@@ -19,9 +19,11 @@ import {
   handleGetRfqList, handleGetRfqRealtime, handleGetQuoteList,
   handleGetQuoteRealtime, handleGetRfqTradeList,
   checkRfqEligibility, assessComboRisk,
+  handleCreateRfq, handleExecuteQuote, handleCancelRfq,
 } from "./tools/rfq/index.js";
 import type {
   RfqListTraderType, RfqQuoteTraderType, RfqStatus, RfqTradeStatus, RiskLeg,
+  CreateRfqLeg, RfqSide,
 } from "./tools/rfq/index.js";
 
 const MAINNET_URL = "https://api.bybit.com";
@@ -423,6 +425,62 @@ function createServer(
             required: ["legs"],
           },
         },
+        {
+          name: "create_rfq",
+          description: "create_rfq — Create a multi-leg Bybit RFQ (block-trade request for quote). MOVES TOWARD REAL MONEY. CONFIRMATION REQUIRED: (1) Present the full RFQ plan — counterparties, every leg, estimated notional. (2) Wait for the user to reply 'CONFIRM'. (3) Call with dry_run=true first — inspect eligibility, risk, and the exact request body. (4) Only call with dry_run=false after explicit CONFIRM. dry_run defaults to true. Live submission ALSO requires RFQ_ENABLE_WRITES=true (off until endpoint paths are live-verified). Pre-flights: account must be RFQ-eligible (UTA 2.0 + portfolio margin) and the combo must pass the risk gate (uncovered/unmodeled combos blocked unless RFQ_ALLOW_UNCOVERED).",
+          inputSchema: {
+            type: "object" as const,
+            properties: {
+              counterparties: { type: "array", items: { type: "string" }, description: "LP desk codes to send the RFQ to (>=1)" },
+              list: {
+                type: "array",
+                description: "1-25 legs",
+                items: {
+                  type: "object" as const,
+                  properties: {
+                    category: { type: "string", enum: ["spot", "linear", "inverse", "option"] },
+                    symbol: { type: "string" },
+                    side: { type: "string", enum: ["buy", "sell"] },
+                    qty: { type: "string", description: "Quantity as a string (Bybit wire format)" },
+                    isLeverage: { type: "boolean" },
+                  },
+                  required: ["category", "symbol", "side", "qty"],
+                },
+              },
+              rfqLinkId: { type: "string", description: "Optional client RFQ id (1-32 chars)" },
+              anonymous: { type: "boolean" },
+              strategyType: { type: "string" },
+              estimatedNotionalUsd: { type: "number", description: "Your estimate of the RFQ's USD notional; checked against the 10,000 USD minimum" },
+              dry_run: { type: "boolean", description: "Default true. Must be explicitly false to submit." },
+            },
+            required: ["counterparties", "list"],
+          },
+        },
+        {
+          name: "execute_quote",
+          description: "execute_quote — Execute an LP's quote against an existing RFQ. IRREVERSIBLE, FILLS REAL MONEY ASYNCHRONOUSLY. CONFIRMATION REQUIRED: (1) Present the quote (use quote_realtime) and the exact rfqId/quoteId/quoteSide. (2) Wait for 'CONFIRM'. (3) Call with dry_run=true to echo the request. (4) Only call dry_run=false after explicit CONFIRM. dry_run defaults to true. Live submission ALSO requires RFQ_ENABLE_WRITES=true.",
+          inputSchema: {
+            type: "object" as const,
+            properties: {
+              rfqId: { type: "string" },
+              quoteId: { type: "string" },
+              quoteSide: { type: "string", enum: ["buy", "sell"], description: "Side of the quote to take" },
+              dry_run: { type: "boolean", description: "Default true. Must be explicitly false to submit." },
+            },
+            required: ["rfqId", "quoteId", "quoteSide"],
+          },
+        },
+        {
+          name: "cancel_rfq",
+          description: "cancel_rfq — Cancel an open RFQ you created. Risk-reducing; not behind the write kill-switch. Supply rfqId or rfqLinkId.",
+          inputSchema: {
+            type: "object" as const,
+            properties: {
+              rfqId: { type: "string" },
+              rfqLinkId: { type: "string" },
+            },
+          },
+        },
       ] : []),
     ],
   }));
@@ -722,6 +780,40 @@ function createServer(
             currentSpot: a.currentSpot as number | undefined,
           });
           result = { ...data, serverTimestamp: new Date().toISOString() };
+          break;
+        }
+
+        case "create_rfq": {
+          if (!ENABLE_RFQ) throw new Error("RFQ module not enabled");
+          result = await handleCreateRfq(client, {
+            counterparties: a.counterparties as string[],
+            list: a.list as CreateRfqLeg[],
+            rfqLinkId: a.rfqLinkId as string | undefined,
+            anonymous: a.anonymous as boolean | undefined,
+            strategyType: a.strategyType as string | undefined,
+            estimatedNotionalUsd: a.estimatedNotionalUsd as number | undefined,
+            dry_run: a.dry_run as boolean | undefined,
+          });
+          break;
+        }
+
+        case "execute_quote": {
+          if (!ENABLE_RFQ) throw new Error("RFQ module not enabled");
+          result = await handleExecuteQuote(client, {
+            rfqId: a.rfqId as string,
+            quoteId: a.quoteId as string,
+            quoteSide: a.quoteSide as RfqSide,
+            dry_run: a.dry_run as boolean | undefined,
+          });
+          break;
+        }
+
+        case "cancel_rfq": {
+          if (!ENABLE_RFQ) throw new Error("RFQ module not enabled");
+          result = await handleCancelRfq(client, {
+            rfqId: a.rfqId as string | undefined,
+            rfqLinkId: a.rfqLinkId as string | undefined,
+          });
           break;
         }
 

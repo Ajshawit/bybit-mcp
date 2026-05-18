@@ -8,4 +8,5 @@ export {
 export { checkRfqEligibility, assertRfqEligible } from "./eligibility";
 export { assessComboRisk } from "./risk";
 export type { AssessComboRiskParams } from "./risk";
+export { handleCreateRfq, handleExecuteQuote, handleCancelRfq } from "./trade";
 export * from "./types";
