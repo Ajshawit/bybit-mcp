@@ -50,7 +50,7 @@ startCommand:
   commandFunction: |-
     (config) => ({
       command: 'npx',
-      args: ['-y', 'ajs-bybit-mcp'],
+      args: ['-y', 'ajs-bybit-quant-mcp'],
       env: {
         BYBIT_API_KEY: config.bybitApiKey,
         BYBIT_API_SECRET: config.bybitApiSecret,

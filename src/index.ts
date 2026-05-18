@@ -26,7 +26,7 @@ function createServer(apiKey: string, apiSecret: string, enableOptions: boolean)
   const ivStore = ENABLE_OPTIONS ? new IVSampleStore() : null;
 
   const server = new Server(
-    { name: "bybit-mcp", version: "1.0.0" },
+    { name: "bybit-quant", version: "1.0.0" },
     { capabilities: { tools: {} } }
   );
 
@@ -612,9 +612,9 @@ if (require.main === module) {
     await server.connect(transport);
     const isTestnet = process.env.BYBIT_TESTNET !== "false";
     if (isTestnet) {
-      console.error("[bybit-mcp] Connecting to Bybit TESTNET (api-testnet.bybit.com)");
+      console.error("[bybit-quant] Connecting to Bybit TESTNET (api-testnet.bybit.com)");
     } else {
-      console.error("[bybit-mcp] ⚠ Connecting to Bybit MAINNET (api.bybit.com) — real funds at risk");
+      console.error("[bybit-quant] ⚠ Connecting to Bybit MAINNET (api.bybit.com) — real funds at risk");
     }
   }
 
