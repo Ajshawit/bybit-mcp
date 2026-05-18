@@ -111,6 +111,24 @@ describe("assessComboRisk", () => {
     expect(res.reasons.join(" ")).toMatch(/currentSpot unavailable/);
   });
 
+  it("normalizes capitalized sides so a naked short is still caught", () => {
+    // Caller passes "Sell" (the convention every other tool in this server
+    // uses). The short rail must still fire.
+    const legs = [
+      { category: "option", symbol: CALL_80K, side: "Sell", qty: 1, price: 1000 },
+    ] as unknown as RiskLeg[];
+    const res = assessComboRisk({ legs, currentSpot: 80000 });
+    expect(res.uncovered).toBe(true);
+    expect(res.allowed).toBe(false);
+  });
+
+  it("fails closed (throws) on an unrecognized side", () => {
+    const legs = [
+      { category: "option", symbol: CALL_80K, side: "long", qty: 1, price: 1000 },
+    ] as unknown as RiskLeg[];
+    expect(() => assessComboRisk({ legs, currentSpot: 80000 })).toThrow(/Invalid leg side/);
+  });
+
   it("fails safe when an option leg lacks a price", () => {
     const legs: RiskLeg[] = [
       { category: "option", symbol: CALL_80K, side: "buy", qty: 1 },

@@ -25,9 +25,24 @@ export interface AssessComboRiskParams {
   currentSpot?: number;
 }
 
+// Normalize `side` defensively. The schema advertises lowercase "buy"/"sell",
+// but MCP enum validation is advisory and every other tool in this server
+// uses capitalized "Buy"/"Sell" — a wrong-case value must NOT silently slip
+// past the naked-short check. Fail closed: unknown side throws, never guesses.
+function normalizeSide(side: string): "buy" | "sell" {
+  const s = String(side).toLowerCase();
+  if (s !== "buy" && s !== "sell") {
+    throw new Error(`Invalid leg side "${side}"; expected "buy" or "sell".`);
+  }
+  return s;
+}
+
 export function assessComboRisk(params: AssessComboRiskParams): ComboRiskResult {
-  const { legs, currentSpot } = params;
+  const { currentSpot } = params;
   const reasons: string[] = [];
+
+  // Normalize once up front so every downstream check sees a canonical side.
+  const legs = params.legs.map((l) => ({ ...l, side: normalizeSide(l.side) }));
 
   const allOptions = legs.every((l) => l.category === "option");
   const hasShort = legs.some((l) => l.side === "sell");
