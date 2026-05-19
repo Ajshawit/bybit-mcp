@@ -20,6 +20,7 @@ There are several Bybit MCPs. Most are thin V5 REST wrappers with one tool per e
 | | `ajs-bybit-mcp` (this repo) | Typical Bybit MCP |
 |---|---|---|
 | **Options trading** | Full stack: chains, Greeks, IV scanning, skew and term structure, payoff math, safe place/close | Not supported |
+| **Multi-leg / block trades** | RFQ taker flow: eligibility pre-flight, combo-risk gate, dry-run default, kill-switched live submit | Not supported |
 | **TradFi** | xStocks (tokenized equities), stock perps, commodity perps, with NYSE-hours awareness | Not supported |
 | **Market analytics** | Regime detection (risk_on / risk_off / choppy), OI divergence scan, crowded positioning scan, volume spike scan | Individual endpoint queries |
 | **Account view** | Single `get_account_status` call: balance, margin in use, unrealised PnL, and all positions across perps, spot, options | Multiple calls for wallet, positions, orders |
@@ -28,7 +29,7 @@ There are several Bybit MCPs. Most are thin V5 REST wrappers with one tool per e
 | **Execution safety** | `CONFIRM` required on every execution tool + `dry_run` preview on every order | None beyond testnet default |
 | **Options safety** | Naked short blocked by default, partial-short detection, premium % of balance guard | N/A |
 | **Token efficiency** | Compact responses by default: orderbook summary (5 fields) instead of 20-level arrays, rounded numerics, optional chain compact mode | Full arrays, raw floats |
-| **Test coverage** | 234 tests across 20 suites | Usually unstated |
+| **Test coverage** | 287 tests across 24 suites | Usually unstated |
 | **Scope** | Trading decisions | Bybit V5 CRUD |
 
 If you want "what's the price of BTC" and a place-order endpoint, the other Bybit MCPs will do fine. If you want a toolkit for real trading workflow — regime views, positioning scans, options flow, TradFi, safe execution, post-trade journaling — use this one.
@@ -45,7 +46,7 @@ Bybit V5 API for AI agents, with confirmation-based safety rails. Exposes Bybit'
 
 ## Tools
 
-14 tools total: 10 always available, plus 4 options tools gated behind `ENABLE_OPTIONS=true`.
+22 tools total: 12 always available, plus 4 options tools gated behind `ENABLE_OPTIONS=true` and 6 RFQ block-trade tools gated behind `ENABLE_RFQ=true`.
 
 ### Account & Market Data
 
@@ -97,6 +98,21 @@ Bybit V5 API for AI agents, with confirmation-based safety rails. Exposes Bybit'
 
 Option premium is charged in **USDC**. USDT is not used for options settlement — ensure USDC balance before placing option trades.
 
+### RFQ / Block Trades (requires `ENABLE_RFQ=true`)
+
+Multi-leg / block-trade support, taker side, for negotiated combos (options + linear + spot, up to 25 legs). **Read-only and dry-run by default** — see the safety note below.
+
+| Tool | Description |
+|------|-------------|
+| `rfq_query` | Read-only RFQ queries: `rfq_list` / `rfq_realtime` (your RFQs), `quote_list` / `quote_realtime` (LP quotes — the poll path while waiting for makers), `trade_list` (executed RFQ trades). Account-scoped; places no orders. |
+| `check_rfq_eligibility` | Pre-flight: calls `/v5/account/info` and reports whether the account meets RFQ hard requirements — UTA 2.0 + `PORTFOLIO_MARGIN` + (if a notional is supplied) the 10,000 USD per-RFQ minimum. Returns `{ eligible, reasons[], accountInfo }`. |
+| `assess_combo_risk` | Pure-math combo risk. Models max loss only when every leg is an option; any linear/spot, missing-spot, or unpriced leg → `modeled:false`, treated as uncovered. Max loss is computed on a ±30% price grid and **understates** an unbounded-tail (naked short) worst case — trust the `uncovered`/`allowed` flags, not the magnitude. |
+| `create_rfq` | Create a 1–25-leg RFQ. `dry_run` defaults true; runs eligibility + combo-risk pre-flights. Live submission also requires `RFQ_ENABLE_WRITES=true`. |
+| `execute_quote` | Execute an LP quote against an RFQ — **irreversible, fills asynchronously**. `dry_run` (default) fetches and shows the live quote's legs/prices so confirmation is informed. Live requires `RFQ_ENABLE_WRITES=true`. |
+| `cancel_rfq` | Cancel an open RFQ you created (by `rfqId` or `rfqLinkId`). Risk-reducing — intentionally not behind the write kill-switch. |
+
+RFQ requires a **UTA 2.0 account in portfolio/combined margin mode** with a **10,000 USD minimum notional per RFQ**; it cannot be used on classic or demo accounts. RFQ endpoint paths are verified against the maintained typed client but **not yet live-verified** — `RFQ_ENABLE_WRITES` stays `false` until you confirm them against a live RFQ-eligible account. Until then every write path is dry-run only.
+
 ---
 
 ## Setup
@@ -141,6 +157,8 @@ Start with `BYBIT_TESTNET=true`. Remove it or set to `false` only after you are 
 
 To use the options tools, add `"ENABLE_OPTIONS": "true"` to `env`.
 
+To use the RFQ block-trade tools, add `"ENABLE_RFQ": "true"`. They are read-only / dry-run until you also set `"RFQ_ENABLE_WRITES": "true"` — keep that off until RFQ endpoint paths are confirmed against a live RFQ-eligible account.
+
 Restart Claude Desktop after saving.
 
 ### Install from source (contributors)
@@ -166,6 +184,9 @@ Then use `node /absolute/path/to/bybit-mcp/dist/index.js` instead of `npx ajs-by
 | `ENABLE_OPTIONS` | No | `false` | Enable the 4 options tools (`options_market`, `get_option_payoff`, `place_option_trade`, `close_option_position`) |
 | `OPTIONS_ALLOW_NAKED_SHORT` | No | `false` | Allow selling options without an offsetting long position. Naked short options carry unlimited or very large maximum loss. |
 | `OPTIONS_MAX_PREMIUM_PCT_BALANCE` | No | none | Block option buys where premium exceeds N% of USDC balance |
+| `ENABLE_RFQ` | No | `false` | Enable the 6 RFQ block-trade tools (`rfq_query`, `check_rfq_eligibility`, `assess_combo_risk`, `create_rfq`, `execute_quote`, `cancel_rfq`) |
+| `RFQ_ENABLE_WRITES` | No | `false` | Kill-switch for live RFQ submission. While `false`, `create_rfq`/`execute_quote` are dry-run only even with `dry_run=false`. Keep off until RFQ endpoint paths are confirmed against a live RFQ-eligible account. `cancel_rfq` is not gated by this. |
+| `RFQ_ALLOW_UNCOVERED` | No | `false` | Allow RFQ combos the risk engine cannot prove are risk-defined (uncovered net-short, or unmodelable mixed/unpriced legs). Off = such combos are blocked. The RFQ-path equivalent of `OPTIONS_ALLOW_NAKED_SHORT`. |
 
 ---
 
@@ -174,6 +195,8 @@ Then use `node /absolute/path/to/bybit-mcp/dist/index.js` instead of `npx ajs-by
 All execution tools (`place_trade`, `close_position`, `manage_position`, `place_option_trade`, `close_option_position`) require explicit `CONFIRM` from the user before submitting an order. Each supports `dry_run=true` to preview the order without placing it. `cancel_order` and `manage_position` (cancelling an SL/TP with `0`) are also confirmation-gated because they are destructive.
 
 Option short selling is blocked by default unless `OPTIONS_ALLOW_NAKED_SHORT=true` is set or an offsetting long position exists. The naked short guard also catches partial naked shorts (e.g. selling 2 contracts when only 1 long exists).
+
+RFQ block-trade writes carry an additional kill-switch. `create_rfq` and `execute_quote` require **all** of: an explicit `dry_run=false`, `RFQ_ENABLE_WRITES=true`, and a passing eligibility + combo-risk pre-flight — and `RFQ_ENABLE_WRITES` stays `false` until RFQ endpoint paths are confirmed against a live RFQ-eligible account. `cancel_rfq` is deliberately exempt (blocking a risk-reducing cancel is the unsafe direction). Note that `assess_combo_risk` max-loss is bounded to a ±30% price grid and understates unbounded-tail (naked short) worst case — rely on its `uncovered`/`allowed` flags, not the maxLoss magnitude.
 
 ---
 
