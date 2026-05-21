@@ -2,6 +2,9 @@
 node_modules/
 dist/
 docs/
+coverage/
+.smithery/
+.DS_Store
 
 .env
 .env.*
