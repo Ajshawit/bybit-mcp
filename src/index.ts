@@ -148,22 +148,11 @@ function createServer(
             notes: { type: "string", description: "Trade rationale — echoed back in response" },
             dry_run: { type: "boolean", description: "If true, returns computed order details without submitting. Default: false. executionPrice in the result is the current last-traded price, not a slippage-adjusted estimate — actual fill may differ." },
           },
+          // Conditional requirements (price for Limit; leverage+sl for perps)
+          // are enforced at runtime in the trade handlers — JSON Schema
+          // `allOf`/`anyOf` is not supported at the top level of a tool
+          // input schema by the Anthropic API.
           required: ["symbol", "side", "margin"],
-          allOf: [
-            {
-              if: { properties: { orderType: { const: "Limit" } }, required: ["orderType"] },
-              then: { required: ["price"] },
-            },
-            {
-              if: {
-                anyOf: [
-                  { not: { required: ["category"] } },
-                  { properties: { category: { enum: ["linear", "inverse"] } }, required: ["category"] },
-                ],
-              },
-              then: { required: ["leverage", "sl"] },
-            },
-          ],
         },
       },
       {
@@ -289,21 +278,11 @@ function createServer(
               limit: { type: "number", description: "For scan. Default: 10" },
               compact: { type: "boolean", description: "For chain: return minimal fields only (symbol, strike, expiry, daysToExpiry, type, bid, ask, iv, openInterest). Default: false" },
             },
+            // Per-action required fields (chain→underlying, quote→symbol,
+            // scan→underlying+filter) are enforced at runtime in the options
+            // handlers — JSON Schema `allOf` is not supported at the top
+            // level of a tool input schema by the Anthropic API.
             required: ["action"],
-            allOf: [
-              {
-                if: { properties: { action: { const: "chain" } }, required: ["action"] },
-                then: { required: ["underlying"] },
-              },
-              {
-                if: { properties: { action: { const: "quote" } }, required: ["action"] },
-                then: { required: ["symbol"] },
-              },
-              {
-                if: { properties: { action: { const: "scan" } }, required: ["action"] },
-                then: { required: ["underlying", "filter"] },
-              },
-            ],
           },
         },
         {
@@ -618,6 +597,7 @@ function createServer(
           if (!ivStore) throw new Error("Options module not enabled");
           const action = a.action as string;
           if (action === "chain") {
+            if (!a.underlying) throw new Error("underlying is required for action 'chain'");
             const data = await handleGetOptionChain(client, {
               underlying: a.underlying as "BTC" | "ETH" | "SOL",
               minDaysToExpiry: a.minDaysToExpiry as number | undefined,
@@ -629,6 +609,7 @@ function createServer(
             });
             result = { ...data, serverTimestamp: new Date().toISOString() };
           } else if (action === "quote") {
+            if (!a.symbol) throw new Error("symbol is required for action 'quote'");
             const data = await handleGetOptionQuote(
               client,
               a.symbol as string,
@@ -636,6 +617,8 @@ function createServer(
             );
             result = { ...data, serverTimestamp: new Date().toISOString() };
           } else if (action === "scan") {
+            if (!a.underlying) throw new Error("underlying is required for action 'scan'");
+            if (!a.filter) throw new Error("filter is required for action 'scan'");
             const data = await handleScanOptions(client, ivStore, {
               underlying: a.underlying as "BTC" | "ETH" | "SOL",
               filter: a.filter as "high_iv" | "low_iv" | "skew" | "high_oi_change",

@@ -1,6 +1,6 @@
 {
   "name": "ajs-bybit-mcp",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Bybit Quant MCP server for Claude Desktop, Claude Code, and Cursor. Trade and analyse Bybit V5 linear/inverse perpetuals, spot, options (Greeks + IV scanning), and TradFi (xStocks, stock & commodity perps) with market regime detection, OI divergence scanning, and confirmation-based safety rails.",
   "main": "dist/index.js",
   "bin": {
