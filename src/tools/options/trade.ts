@@ -122,14 +122,22 @@ export async function handlePlaceOptionTrade(
   const estimatedFillPrice = side === "Buy" ? ask1Price : bid1Price;
   const estimatedPremium = qty * estimatedFillPrice * multiplier;
 
-  if (side === "Sell" && process.env.OPTIONS_ALLOW_NAKED_SHORT !== "true") {
+  // Uncovered-short check. The position lookup runs for every Sell — even when
+  // OPTIONS_ALLOW_NAKED_SHORT=true — so a dry-run can still surface the naked
+  // portion as a warning. The flag only governs whether an uncovered short is
+  // blocked, not whether it is detected. "Covered" means an already-open long
+  // position in the SAME symbol; a different-strike long (e.g. a vertical
+  // spread leg) does not count.
+  let uncoveredShortQty = 0;
+  if (side === "Sell") {
     const posRes = await client.signedGet<PositionResult>("/v5/position/list", {
       category: "option",
       symbol,
     });
     const existingPos = posRes.list.find((p) => p.side === "Buy" && parseFloat(p.size) > 0);
     const existingLongQty = existingPos ? parseFloat(existingPos.size) : 0;
-    if (qty > existingLongQty) {
+    uncoveredShortQty = Math.max(0, qty - existingLongQty);
+    if (uncoveredShortQty > 0 && process.env.OPTIONS_ALLOW_NAKED_SHORT !== "true") {
       throw new Error(
         "Naked short options are disabled by default. Set OPTIONS_ALLOW_NAKED_SHORT=true to enable. Naked short options carry unlimited or very large maximum loss."
       );
@@ -176,6 +184,11 @@ export async function handlePlaceOptionTrade(
     }
     if (daysToExpiry <= 7) {
       warnings.push(`Near expiry: ${daysToExpiry} days to expiration`);
+    }
+    if (uncoveredShortQty > 0) {
+      warnings.push(
+        `Uncovered short: ${uncoveredShortQty} of ${qty} contract(s) are naked — unlimited or very large maximum loss. Permitted by OPTIONS_ALLOW_NAKED_SHORT=true.`
+      );
     }
     return {
       dryRun: true,

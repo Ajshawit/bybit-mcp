@@ -116,7 +116,8 @@ describe("handlePlaceOptionTrade", () => {
     process.env.OPTIONS_ALLOW_NAKED_SHORT = "true";
     const client = new MockClient("k", "s", "u");
     (client.publicGet as jest.Mock).mockResolvedValueOnce(mockTicker);
-    // No position check when flag is set
+    // Position lookup still runs (for the uncovered-short warning), but does not block
+    (client.signedGet as jest.Mock).mockResolvedValueOnce({ list: [] });
     (client.signedPost as jest.Mock).mockResolvedValueOnce(mockOrderResult);
 
     const result = await handlePlaceOptionTrade(client, {
@@ -127,6 +128,65 @@ describe("handlePlaceOptionTrade", () => {
     });
 
     expect((result as PlaceOptionTradeResult).orderId).toBe("opt-order-1");
+  });
+
+  it("5b. dry_run naked short with OPTIONS_ALLOW_NAKED_SHORT=true pushes an uncovered-short warning", async () => {
+    process.env.OPTIONS_ALLOW_NAKED_SHORT = "true";
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValueOnce(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValueOnce({ list: [] }); // no existing long
+
+    const result = await handlePlaceOptionTrade(client, {
+      symbol: SYMBOL,
+      side: "Sell",
+      qty: 2,
+      orderType: "Market",
+      dry_run: true,
+    });
+
+    const warnings = (result as OptionDryRunResult).warnings;
+    expect(warnings.some((w) => w.includes("Uncovered short"))).toBe(true);
+    expect(warnings.some((w) => w.includes("2 of 2"))).toBe(true);
+    expect((result as OptionDryRunResult).wouldSubmit).toBe(true);
+  });
+
+  it("5c. dry_run partial-covered short warns only about the naked portion", async () => {
+    process.env.OPTIONS_ALLOW_NAKED_SHORT = "true";
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValueOnce(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValueOnce({
+      list: [{ symbol: SYMBOL, side: "Buy", size: "1", avgPrice: "1000" }], // 1 long
+    });
+
+    const result = await handlePlaceOptionTrade(client, {
+      symbol: SYMBOL,
+      side: "Sell",
+      qty: 3, // 3 sold − 1 covered = 2 naked
+      orderType: "Market",
+      dry_run: true,
+    });
+
+    const warnings = (result as OptionDryRunResult).warnings;
+    expect(warnings.some((w) => w.includes("Uncovered short") && w.includes("2 of 3"))).toBe(true);
+  });
+
+  it("5d. dry_run fully-covered short produces no uncovered-short warning", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValueOnce(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValueOnce({
+      list: [{ symbol: SYMBOL, side: "Buy", size: "2", avgPrice: "1000" }], // 2 longs cover 2 sold
+    });
+
+    const result = await handlePlaceOptionTrade(client, {
+      symbol: SYMBOL,
+      side: "Sell",
+      qty: 2,
+      orderType: "Market",
+      dry_run: true,
+    });
+
+    const warnings = (result as OptionDryRunResult).warnings;
+    expect(warnings.some((w) => w.includes("Uncovered short"))).toBe(false);
   });
 
   it("6. naked short succeeds when existing long qty covers sell qty", async () => {
