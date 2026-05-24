@@ -211,6 +211,8 @@ export interface ClosePositionParams {
   category?: PerpCategory;
   percent?: number;
   qty?: number;
+  orderType?: "Market" | "Limit";
+  price?: number;
   notes?: string;
   confirm?: string;
 }
@@ -219,9 +221,18 @@ export async function handleClosePerp(
   client: BybitClient,
   params: ClosePositionParams
 ): Promise<ClosePositionResult> {
-  const { symbol, side, category = "linear", percent = 100, qty: explicitQty, notes, confirm } = params;
+  const {
+    symbol, side, category = "linear", percent = 100,
+    qty: explicitQty, orderType = "Market", price: limitPrice,
+    notes, confirm,
+  } = params;
 
+  // Gate first, shape validation second — same invariant as handlePlacePerp.
   assertConfirm(confirm, false, "close_position");
+
+  if (orderType === "Limit" && limitPrice == null) {
+    throw new Error("price is required for Limit close orders");
+  }
 
   const [positionIdxInit, inst] = await Promise.all([
     detectPositionIdx(client, category, symbol, side),
@@ -246,10 +257,11 @@ export async function handleClosePerp(
   const nonce = crypto.randomBytes(3).toString("hex");
 
   const orderBody: Record<string, unknown> = {
-    category, symbol, side: closeSide, orderType: "Market",
+    category, symbol, side: closeSide, orderType,
     qty: closeQty, positionIdx, reduceOnly: true,
     orderLinkId: `mcp-${Date.now()}-${nonce}`,
   };
+  if (orderType === "Limit") orderBody.price = String(limitPrice);
 
   let orderRes: OrderCreateResult;
   try {

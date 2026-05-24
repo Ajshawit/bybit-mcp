@@ -359,6 +359,98 @@ describe("handleClosePerp", () => {
   });
 });
 
+describe("handleClosePerp / limit (reduce-only)", () => {
+  beforeEach(() => {
+    mockEnsure.mockResolvedValue(mockInst);
+    mockDetect.mockResolvedValue(1);
+  });
+
+  it("sends Limit order with price and keeps reduceOnly:true", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.signedGet as jest.Mock).mockResolvedValue(mockPositionList);
+    (client.signedPost as jest.Mock).mockResolvedValue({ orderId: "lc1", orderLinkId: "mcp-lc1" });
+
+    await handleClosePerp(client, {
+      symbol: "BTCUSDT", side: "Buy",
+      orderType: "Limit", price: 31000,
+      qty: 0.005,
+      confirm: "CONFIRM",
+    });
+
+    const call = (client.signedPost as jest.Mock).mock.calls[0];
+    expect(call[1].orderType).toBe("Limit");
+    expect(call[1].price).toBe("31000");
+    expect(call[1].reduceOnly).toBe(true);
+    expect(call[1].side).toBe("Sell");
+  });
+
+  it("throws when orderType is Limit but price is missing", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.signedGet as jest.Mock).mockResolvedValue(mockPositionList);
+
+    await expect(
+      handleClosePerp(client, {
+        symbol: "BTCUSDT", side: "Buy",
+        orderType: "Limit",
+        confirm: "CONFIRM",
+      })
+    ).rejects.toMatchObject({ message: expect.stringContaining("price is required") });
+  });
+
+  it("Limit close with percent floors qty against qtyStep and keeps reduceOnly:true", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.signedGet as jest.Mock).mockResolvedValue(mockPositionList); // size 0.01
+    (client.signedPost as jest.Mock).mockResolvedValue({ orderId: "lc-pct", orderLinkId: "mcp-lc-pct" });
+
+    await handleClosePerp(client, {
+      symbol: "BTCUSDT", side: "Buy",
+      orderType: "Limit", price: 31000,
+      percent: 33,
+      confirm: "CONFIRM",
+    });
+
+    const call = (client.signedPost as jest.Mock).mock.calls[0];
+    // 0.01 * 0.33 = 0.0033 → floored to qtyStep 0.001 = 0.003
+    expect(parseFloat(call[1].qty)).toBeCloseTo(0.003, 4);
+    expect(call[1].orderType).toBe("Limit");
+    expect(call[1].price).toBe("31000");
+    expect(call[1].reduceOnly).toBe(true);
+  });
+
+  it("Market remains the default when orderType is omitted", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.signedGet as jest.Mock).mockResolvedValue(mockPositionList);
+    (client.signedPost as jest.Mock).mockResolvedValue({ orderId: "mk1", orderLinkId: "mcp-mk1" });
+
+    await handleClosePerp(client, { symbol: "BTCUSDT", side: "Buy", confirm: "CONFIRM" });
+
+    const call = (client.signedPost as jest.Mock).mock.calls[0];
+    expect(call[1].orderType).toBe("Market");
+    expect(call[1].price).toBeUndefined();
+  });
+
+  it("rejects Limit close on a short (Sell-side position) with Buy close at Limit price", async () => {
+    // A short position closes with a Buy. We just verify side flip works for Limit too.
+    const client = new MockClient("k", "s", "u");
+    (client.signedGet as jest.Mock).mockResolvedValue({ list: [{ size: "0.01", positionIdx: 2 }] });
+    mockDetect.mockResolvedValueOnce(2);
+    (client.signedPost as jest.Mock).mockResolvedValue({ orderId: "lc2", orderLinkId: "mcp-lc2" });
+
+    await handleClosePerp(client, {
+      symbol: "BTCUSDT", side: "Sell",
+      orderType: "Limit", price: 29000,
+      qty: 0.005,
+      confirm: "CONFIRM",
+    });
+
+    const call = (client.signedPost as jest.Mock).mock.calls[0];
+    expect(call[1].side).toBe("Buy");
+    expect(call[1].orderType).toBe("Limit");
+    expect(call[1].price).toBe("29000");
+    expect(call[1].reduceOnly).toBe(true);
+  });
+});
+
 describe("handleManagePosition", () => {
   beforeEach(() => {
     mockDetect.mockResolvedValue(1);

@@ -31,6 +31,8 @@ export interface ClosePositionParams {
   category?: TradeCategory;
   percent?: number;
   qty?: number;
+  orderType?: "Market" | "Limit";
+  price?: number;
   notes?: string;
   confirm?: string;
 }
@@ -63,6 +65,9 @@ export async function handleClosePosition(
   const category = params.category ?? "linear";
 
   if (category === "spot" || category === "spot_margin") {
+    if (params.orderType === "Limit") {
+      throw new Error("close_position with orderType=Limit is only supported for perps — spot has no reduceOnly concept");
+    }
     return handleCloseSpot(client, params);
   }
 

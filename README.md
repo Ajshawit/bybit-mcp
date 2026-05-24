@@ -68,7 +68,7 @@ Bybit V5 API for AI agents, with confirmation-based safety rails. Exposes Bybit'
 | Tool | Description |
 |------|-------------|
 | `place_trade` | Place a market or limit order on a linear perp, inverse perp, spot, or spot-margin market. `margin` is USDT for linear/spot, **base coin** (e.g. BTC) for inverse. Perps require `leverage` + `sl`; spot does not support `sl`. Supports `tp`, `trailingStop`, `trailingActivatePrice`, `notes`, and `dry_run`. |
-| `close_position` | Close an open position fully (`percent`) or partially, or by explicit `qty`. Works for linear, inverse, spot, spot-margin. For spot, sells from total wallet balance for the base coin. |
+| `close_position` | Close an open position fully (`percent`) or partially, or by explicit `qty`. Defaults to `orderType: "Market"`; pass `orderType: "Limit"` + `price` for perp/inverse to layer reduce-only take-profit ladders (the order stays `reduceOnly: true` and cannot accidentally open a new position). Works for linear, inverse, spot, spot-margin — spot is Market-only. For spot, sells from total wallet balance for the base coin. |
 | `manage_position` | Update SL, TP, or trailing stop on an open perp position (linear or inverse — not spot). Pass `0` to cancel an existing SL/TP (destructive — confirm explicitly). |
 
 ### Orders & Post-Trade Review

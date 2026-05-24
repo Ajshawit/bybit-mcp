@@ -95,6 +95,18 @@ describe("handleClosePosition dispatcher", () => {
     expect(mockCloseSpot).toHaveBeenCalled();
     expect(mockClosePerp).not.toHaveBeenCalled();
   });
+
+  it("rejects orderType=Limit for spot close (no reduceOnly concept)", async () => {
+    const client = new MockClient("k", "s", "u");
+
+    await expect(
+      handleClosePosition(client, {
+        symbol: "BTCUSDT", side: "Buy", category: "spot",
+        orderType: "Limit", price: 30000, confirm: "CONFIRM",
+      })
+    ).rejects.toMatchObject({ message: expect.stringContaining("only supported for perps") });
+    expect(mockCloseSpot).not.toHaveBeenCalled();
+  });
 });
 
 describe("handleManagePosition", () => {

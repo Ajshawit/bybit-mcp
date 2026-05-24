@@ -158,7 +158,7 @@ function createServer(
       },
       {
         name: "close_position",
-        description: "Close an open position (fully or partially). For spot: sells from total wallet balance for the base coin — use `qty` to specify exact amount if you hold the coin from sources outside this MCP. CONFIRMATION REQUIRED: (1) Present the close plan — symbol, category, side, size to close, rationale. (2) Wait for the user to reply with 'CONFIRM'. (3) Only call this tool after receiving explicit CONFIRM. Never call this tool in the same turn as proposing the close.",
+        description: "Close an open position (fully or partially). Perp/inverse default to Market close; pass orderType='Limit' + price to layer reduce-only take-profit ladders (the order stays reduceOnly:true, so it can only shrink the position). Spot is Market-only — sells from total wallet balance for the base coin; use `qty` to specify exact amount if you hold the coin from sources outside this MCP. CONFIRMATION REQUIRED: (1) Present the close plan — symbol, category, side, orderType, size, price (if Limit), rationale. (2) Wait for the user to reply with 'CONFIRM'. (3) Only call this tool after receiving explicit CONFIRM. Never call this tool in the same turn as proposing the close.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -167,6 +167,8 @@ function createServer(
             category: { type: "string", enum: ["linear", "inverse", "spot", "spot_margin"], description: "Default: linear" },
             percent: { type: "number", description: "Percentage to close (1-100). Default: 100. Ignored if qty provided." },
             qty: { type: "number", description: "Explicit close quantity in base coin. Overrides percent." },
+            orderType: { type: "string", enum: ["Market", "Limit"], description: "Default: Market. Use Limit for layered take-profit ladders at specific prices — perp/inverse only. The order stays reduceOnly:true, so it can only shrink the position, never accidentally open a new one." },
+            price: { type: "number", exclusiveMinimum: 0, description: "Required when orderType=Limit. The limit price for the reduce-only close order. Must be > 0." },
             notes: { type: "string", description: "Rationale — echoed back in response" },
             confirm: { type: "string", description: "Must equal the literal string 'CONFIRM' (case-sensitive, no whitespace). Schema-enforced." },
           },
@@ -560,6 +562,8 @@ function createServer(
             category: a.category as "linear" | "inverse" | "spot" | "spot_margin" | undefined,
             percent: a.percent as number | undefined,
             qty: a.qty as number | undefined,
+            orderType: a.orderType as "Market" | "Limit" | undefined,
+            price: a.price as number | undefined,
             notes: a.notes as string | undefined,
             confirm: a.confirm as string | undefined,
           });
