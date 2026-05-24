@@ -26,7 +26,7 @@ There are several Bybit MCPs. Most are thin V5 REST wrappers with one tool per e
 | **Account view** | Single `get_account_status` call: balance, margin in use, unrealised PnL, and all positions across perps, spot, options | Multiple calls for wallet, positions, orders |
 | **Consolidated market data** | `get_market_data` returns price, funding, OI, klines, and top-20 orderbook in one call | One endpoint per data type |
 | **Post-trade review** | `get_closed_trades` returns realised PnL, fees-net PnL, hold duration, leverage used | None |
-| **Execution safety** | `CONFIRM` required on every execution tool + `dry_run` preview on every order | None beyond testnet default |
+| **Execution safety** | Schema-validated `confirm: "CONFIRM"` required on every execution tool + `dry_run` preview on every order | None beyond testnet default |
 | **Options safety** | Naked short blocked by default, partial-short detection, premium % of balance guard | N/A |
 | **Token efficiency** | Compact responses by default: orderbook summary (5 fields) instead of 20-level arrays, rounded numerics, optional chain compact mode | Full arrays, raw floats |
 | **Test coverage** | 287 tests across 24 suites | Usually unstated |
@@ -192,7 +192,7 @@ Then use `node /absolute/path/to/bybit-mcp/dist/index.js` instead of `npx ajs-by
 
 ## Safety
 
-All execution tools (`place_trade`, `close_position`, `manage_position`, `place_option_trade`, `close_option_position`) require explicit `CONFIRM` from the user before submitting an order. Each supports `dry_run=true` to preview the order without placing it. `cancel_order` and `manage_position` (cancelling an SL/TP with `0`) are also confirmation-gated because they are destructive.
+All execution tools (`place_trade`, `close_position`, `manage_position`, `cancel_order`, `place_option_trade`, `close_option_position`, `create_rfq`, `execute_quote`) require an explicit `confirm: "CONFIRM"` parameter for live submission — schema-validated, exact and case-sensitive. A missing or malformed `confirm` rejects the call before any signed request is sent. Each tool supports `dry_run=true` to preview the order without placing it (and without `confirm`). The `CONFIRM` discipline is therefore enforced at the protocol layer, not just in tool descriptions. RFQ `cancel_rfq` is intentionally exempt (blocking a risk-reducing cancel is the unsafe direction).
 
 Option short selling is blocked by default unless `OPTIONS_ALLOW_NAKED_SHORT=true` is set or an offsetting long position exists. The naked short guard also catches partial naked shorts (e.g. selling 2 contracts when only 1 long exists).
 
@@ -235,7 +235,7 @@ Claude: [calls place_trade with dry_run=true]
         Filled 0.89 AAVE @ $90.67. Order ID: b53a54b4-...
 ```
 
-The model presents a plan, waits for CONFIRM, verifies via dry run, then submits. This flow applies to all execution tools.
+The model presents a plan, waits for the user's `CONFIRM` reply, translates that reply into the schema-validated `confirm: "CONFIRM"` parameter on the tool call, verifies via dry run, then submits. The literal `CONFIRM` string in the chat is what the model passes through as the `confirm` argument — the protocol-layer gate rejects the call if the parameter is missing, lower-cased, or has whitespace. This flow applies to all execution tools.
 
 ---
 

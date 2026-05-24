@@ -3,6 +3,7 @@ import { BybitClient } from "../../client";
 import { parseOptionSymbol, OPTION_MULTIPLIERS, OptionPayoffSummary, OptionTickersResult } from "./types";
 import { WalletBalanceResult, OrderCreateResult } from "../types";
 import { handleGetOptionPayoff } from "./payoff";
+import { assertConfirm } from "../confirm";
 
 export interface PlaceOptionTradeParams {
   symbol: string;
@@ -12,6 +13,7 @@ export interface PlaceOptionTradeParams {
   price?: number;
   notes?: string;
   dry_run?: boolean;
+  confirm?: string;
 }
 
 export interface PlaceOptionTradeResult {
@@ -50,6 +52,7 @@ export interface CloseOptionPositionParams {
   price?: number;
   notes?: string;
   dry_run?: boolean;
+  confirm?: string;
 }
 
 export interface CloseOptionResult {
@@ -91,7 +94,11 @@ export async function handlePlaceOptionTrade(
   client: BybitClient,
   params: PlaceOptionTradeParams
 ): Promise<PlaceOptionTradeResult | OptionDryRunResult> {
-  const { symbol, side, qty, orderType, price, notes, dry_run } = params;
+  const { symbol, side, qty, orderType, price, notes, dry_run, confirm } = params;
+
+  // assertConfirm fires before any other shape validation so a missing
+  // confirm always reports the gate error first.
+  assertConfirm(confirm, dry_run ?? false, "place_option_trade");
 
   if (orderType === "Limit" && price == null) {
     throw new Error("price is required for Limit orders");
@@ -228,7 +235,11 @@ export async function handleCloseOptionPosition(
   client: BybitClient,
   params: CloseOptionPositionParams
 ): Promise<CloseOptionResult | OptionCloseDryRunResult> {
-  const { symbol, qty, orderType, price, notes, dry_run } = params;
+  const { symbol, qty, orderType, price, notes, dry_run, confirm } = params;
+
+  // assertConfirm fires before any other shape validation so a missing
+  // confirm always reports the gate error first.
+  assertConfirm(confirm, dry_run ?? false, "close_option_position");
 
   if (orderType === "Limit" && price == null) {
     throw new Error("price is required for Limit orders");

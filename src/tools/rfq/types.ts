@@ -260,6 +260,7 @@ export interface CreateRfqParams {
   // we cannot reliably obtain for every leg category.
   estimatedNotionalUsd?: number;
   dry_run?: boolean;
+  confirm?: string;
 }
 
 export interface CreateRfqResult {
@@ -277,6 +278,7 @@ export interface ExecuteQuoteParams {
   quoteId: string;
   quoteSide: RfqSide;
   dry_run?: boolean;
+  confirm?: string;
 }
 
 export interface ExecuteQuoteResult {

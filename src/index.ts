@@ -147,6 +147,7 @@ function createServer(
             trailingActivatePrice: { type: "number", description: "Price at which trailing stop activates. Optional, perps only." },
             notes: { type: "string", description: "Trade rationale — echoed back in response" },
             dry_run: { type: "boolean", description: "If true, returns computed order details without submitting. Default: false. executionPrice in the result is the current last-traded price, not a slippage-adjusted estimate — actual fill may differ." },
+            confirm: { type: "string", description: "Must equal the literal string 'CONFIRM' (case-sensitive, no whitespace) to submit live. Schema-enforced. Omit when dry_run=true." },
           },
           // Conditional requirements (price for Limit; leverage+sl for perps)
           // are enforced at runtime in the trade handlers — JSON Schema
@@ -167,6 +168,7 @@ function createServer(
             percent: { type: "number", description: "Percentage to close (1-100). Default: 100. Ignored if qty provided." },
             qty: { type: "number", description: "Explicit close quantity in base coin. Overrides percent." },
             notes: { type: "string", description: "Rationale — echoed back in response" },
+            confirm: { type: "string", description: "Must equal the literal string 'CONFIRM' (case-sensitive, no whitespace). Schema-enforced." },
           },
           required: ["symbol", "side"],
         },
@@ -190,6 +192,7 @@ function createServer(
               },
             },
             notes: { type: "string", description: "Rationale — echoed back in response" },
+            confirm: { type: "string", description: "Must equal the literal string 'CONFIRM' (case-sensitive, no whitespace). Schema-enforced." },
           },
           required: ["symbol", "side", "updates"],
         },
@@ -215,6 +218,7 @@ function createServer(
             symbol: { type: "string", description: "Symbol e.g. BTCUSDT" },
             orderId: { type: "string", description: "Order ID from list_open_orders or place_trade response" },
             category: { type: "string", enum: ["linear", "inverse", "spot", "spot_margin", "option"], description: "Default: linear" },
+            confirm: { type: "string", description: "Must equal the literal string 'CONFIRM' (case-sensitive, no whitespace). Schema-enforced." },
           },
           required: ["symbol", "orderId"],
         },
@@ -328,6 +332,7 @@ function createServer(
               price: { type: "number", description: "Required for Limit orders" },
               notes: { type: "string", description: "Trade rationale — echoed back in response" },
               dry_run: { type: "boolean", description: "If true, returns trade plan without submitting. Default: false" },
+              confirm: { type: "string", description: "Must equal the literal string 'CONFIRM' (case-sensitive, no whitespace) to submit live. Schema-enforced. Omit when dry_run=true." },
             },
             required: ["symbol", "side", "qty", "orderType"],
           },
@@ -344,6 +349,7 @@ function createServer(
               price: { type: "number", description: "Required for Limit orders" },
               notes: { type: "string", description: "Rationale — echoed back in response" },
               dry_run: { type: "boolean", description: "If true, returns close plan without submitting. Default: false" },
+              confirm: { type: "string", description: "Must equal the literal string 'CONFIRM' (case-sensitive, no whitespace) to submit live. Schema-enforced. Omit when dry_run=true." },
             },
             required: ["symbol", "orderType"],
           },
@@ -431,6 +437,7 @@ function createServer(
               strategyType: { type: "string" },
               estimatedNotionalUsd: { type: "number", description: "Your estimate of the RFQ's USD notional; checked against the 10,000 USD minimum" },
               dry_run: { type: "boolean", description: "Default true. Must be explicitly false to submit." },
+              confirm: { type: "string", description: "Must equal the literal string 'CONFIRM' (case-sensitive, no whitespace) to submit live. Schema-enforced. Omit when dry_run=true (the default)." },
             },
             required: ["counterparties", "list"],
           },
@@ -445,6 +452,7 @@ function createServer(
               quoteId: { type: "string" },
               quoteSide: { type: "string", enum: ["buy", "sell"], description: "Side of the quote to take" },
               dry_run: { type: "boolean", description: "Default true. Must be explicitly false to submit." },
+              confirm: { type: "string", description: "Must equal the literal string 'CONFIRM' (case-sensitive, no whitespace) to submit live. Schema-enforced. Omit when dry_run=true (the default)." },
             },
             required: ["rfqId", "quoteId", "quoteSide"],
           },
@@ -539,6 +547,7 @@ function createServer(
             trailingActivatePrice: a.trailingActivatePrice as number | undefined,
             notes: a.notes as string | undefined,
             dry_run: a.dry_run as boolean | undefined,
+            confirm: a.confirm as string | undefined,
           });
           result = { ...tradeData, serverTimestamp: new Date().toISOString() };
           break;
@@ -552,6 +561,7 @@ function createServer(
             percent: a.percent as number | undefined,
             qty: a.qty as number | undefined,
             notes: a.notes as string | undefined,
+            confirm: a.confirm as string | undefined,
           });
           break;
 
@@ -562,6 +572,7 @@ function createServer(
             category: a.category as "linear" | "inverse" | undefined,
             updates: a.updates as { sl?: number; tp?: number; trailingStop?: number; trailingActivatePrice?: number },
             notes: a.notes as string | undefined,
+            confirm: a.confirm as string | undefined,
           });
           break;
 
@@ -578,6 +589,7 @@ function createServer(
             symbol: a.symbol as string,
             orderId: a.orderId as string,
             category: a.category as "linear" | "inverse" | "spot" | "option" | undefined,
+            confirm: a.confirm as string | undefined,
           });
           break;
         }
@@ -658,6 +670,7 @@ function createServer(
             price: a.price as number | undefined,
             notes: a.notes as string | undefined,
             dry_run: a.dry_run as boolean | undefined,
+            confirm: a.confirm as string | undefined,
           });
           result = data;
           break;
@@ -672,6 +685,7 @@ function createServer(
             price: a.price as number | undefined,
             notes: a.notes as string | undefined,
             dry_run: a.dry_run as boolean | undefined,
+            confirm: a.confirm as string | undefined,
           });
           result = data;
           break;
@@ -776,6 +790,7 @@ function createServer(
             strategyType: a.strategyType as string | undefined,
             estimatedNotionalUsd: a.estimatedNotionalUsd as number | undefined,
             dry_run: a.dry_run as boolean | undefined,
+            confirm: a.confirm as string | undefined,
           });
           break;
         }
@@ -787,6 +802,7 @@ function createServer(
             quoteId: a.quoteId as string,
             quoteSide: a.quoteSide as RfqSide,
             dry_run: a.dry_run as boolean | undefined,
+            confirm: a.confirm as string | undefined,
           });
           break;
         }

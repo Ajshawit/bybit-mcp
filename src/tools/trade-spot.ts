@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { BybitClient } from "../client";
 import { floorToStep } from "../util";
 import { ensureInstrumentInfo, fetchFillSnapshot } from "./trade-shared";
+import { assertConfirm } from "./confirm";
 import {
   TickersResult, WalletBalanceResult, OrderCreateResult,
   PlaceTradeResult, SpotCloseResult, DryRunResult,
@@ -19,6 +20,7 @@ export interface PlaceSpotParams {
   trailingStop?: number;
   notes?: string;
   dry_run?: boolean;
+  confirm?: string;
 }
 
 export async function handlePlaceSpot(
@@ -28,8 +30,12 @@ export async function handlePlaceSpot(
   const {
     symbol, side, margin, category,
     orderType = "Market", price: limitPrice,
-    sl, tp, trailingStop, notes, dry_run = false,
+    sl, tp, trailingStop, notes, dry_run = false, confirm,
   } = params;
+
+  // assertConfirm fires before any other shape validation so a missing
+  // confirm always reports the gate error first.
+  assertConfirm(confirm, dry_run, "place_trade");
 
   if (sl != null || tp != null || trailingStop != null) {
     throw new Error("SL/TP/trailing stop not supported for spot — no position to attach to");
@@ -125,13 +131,16 @@ export interface CloseSpotParams {
   percent?: number;
   qty?: number;
   notes?: string;
+  confirm?: string;
 }
 
 export async function handleCloseSpot(
   client: BybitClient,
   params: CloseSpotParams
 ): Promise<SpotCloseResult> {
-  const { symbol, percent = 100, qty: explicitQty, notes } = params;
+  const { symbol, percent = 100, qty: explicitQty, notes, confirm } = params;
+
+  assertConfirm(confirm, false, "close_position");
   // Only supports USDT-quoted spot symbols (e.g. BTCUSDT → BTC). Non-USDT quotes are out of scope.
   const baseCoin = symbol.replace(/USDT$/, "");
 

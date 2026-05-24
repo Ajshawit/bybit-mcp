@@ -3,6 +3,7 @@ import { assertRfqEligible, checkRfqEligibility } from "./eligibility";
 import { assessComboRisk } from "./risk";
 import { handleGetQuoteRealtime } from "./query";
 import { OptionTickersResult } from "../options/types";
+import { assertConfirm } from "../confirm";
 import {
   CreateRfqParams,
   CreateRfqResult,
@@ -148,6 +149,7 @@ export async function handleCreateRfq(
   }
 
   const isDryRun = params.dry_run !== false; // default TRUE
+  assertConfirm(params.confirm, isDryRun, "create_rfq");
   const body = buildCreateBody(params);
   const { risk, pricingWarnings } = await buildPricedRisk(client, params);
 
@@ -193,6 +195,7 @@ export async function handleExecuteQuote(
   }
 
   const isDryRun = params.dry_run !== false; // default TRUE
+  assertConfirm(params.confirm, isDryRun, "execute_quote");
   const body: Record<string, unknown> = {
     rfqId: params.rfqId,
     quoteId: params.quoteId,

@@ -48,7 +48,7 @@ describe("handlePlacePerp", () => {
       .mockResolvedValueOnce({})
       .mockResolvedValueOnce(mockOrderResult);
 
-    await handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 30, leverage: 10, sl: 29000 });
+    await handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 30, leverage: 10, sl: 29000, confirm: "CONFIRM" });
 
     const orderCall = (client.signedPost as jest.Mock).mock.calls[1];
     // qty = 30 * 10 / 30000 = 0.01
@@ -70,7 +70,7 @@ describe("handlePlacePerp", () => {
       .mockResolvedValueOnce({})
       .mockResolvedValueOnce(mockOrderResult);
 
-    await handlePlacePerp(client, { symbol: "BTCUSD", side: "Buy", margin: 0.01, leverage: 10, sl: 29000, category: "inverse" });
+    await handlePlacePerp(client, { symbol: "BTCUSD", side: "Buy", margin: 0.01, leverage: 10, sl: 29000, category: "inverse", confirm: "CONFIRM" });
 
     const orderCall = (client.signedPost as jest.Mock).mock.calls[1];
     // qty = 0.01 * 10 * 30000 = 3000 contracts
@@ -90,7 +90,7 @@ describe("handlePlacePerp", () => {
     (client.signedGet as jest.Mock).mockResolvedValue(mockWalletBtc);
     (client.signedPost as jest.Mock).mockResolvedValue({}).mockResolvedValueOnce({}).mockResolvedValueOnce(mockOrderResult);
 
-    await handlePlacePerp(client, { symbol: "BTCUSD", side: "Buy", margin: 0.01, leverage: 5, sl: 29000, category: "inverse" });
+    await handlePlacePerp(client, { symbol: "BTCUSD", side: "Buy", margin: 0.01, leverage: 5, sl: 29000, category: "inverse", confirm: "CONFIRM" });
 
     const getCall = (client.signedGet as jest.Mock).mock.calls[0];
     expect(getCall[1].coin).toBe("BTC");
@@ -104,7 +104,7 @@ describe("handlePlacePerp", () => {
       .mockResolvedValueOnce({})
       .mockResolvedValueOnce(mockOrderResult);
 
-    await handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 30, leverage: 10, sl: 29000, orderType: "Limit", price: 29500 });
+    await handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 30, leverage: 10, sl: 29000, orderType: "Limit", price: 29500, confirm: "CONFIRM" });
 
     const orderCall = (client.signedPost as jest.Mock).mock.calls[1];
     expect(orderCall[1].orderType).toBe("Limit");
@@ -155,7 +155,7 @@ describe("handlePlacePerp", () => {
   it("throws when orderType=Limit but no price", async () => {
     const client = new MockClient("k", "s", "u");
     await expect(
-      handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 30, leverage: 10, sl: 29000, orderType: "Limit" })
+      handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 30, leverage: 10, sl: 29000, orderType: "Limit", confirm: "CONFIRM" })
     ).rejects.toMatchObject({ message: expect.stringContaining("price is required") });
   });
 
@@ -169,7 +169,7 @@ describe("handlePlacePerp", () => {
       .mockRejectedValueOnce(new BybitError(10001, "position idx not match"))
       .mockResolvedValueOnce(mockOrderResult); // retry succeeds
 
-    const result = await handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 10, leverage: 5, sl: 29000 });
+    const result = await handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 10, leverage: 5, sl: 29000, confirm: "CONFIRM" });
 
     expect(result).toMatchObject({ orderId: "order123" });
     const retryCall = (client.signedPost as jest.Mock).mock.calls[2];
@@ -187,7 +187,7 @@ describe("handlePlacePerp", () => {
       .mockRejectedValueOnce(new BybitError(10001, "mismatch"));
 
     await expect(
-      handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 10, leverage: 5, sl: 29000 })
+      handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 10, leverage: 5, sl: 29000, confirm: "CONFIRM" })
     ).rejects.toMatchObject({ message: expect.stringContaining("auto-retry could not resolve") });
   });
 
@@ -256,7 +256,7 @@ describe("handlePlacePerp", () => {
       .mockResolvedValueOnce({})
       .mockResolvedValueOnce(mockOrderResult);
 
-    const result = await handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 30, leverage: 10, sl: 29000 }) as any;
+    const result = await handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 30, leverage: 10, sl: 29000, confirm: "CONFIRM" }) as any;
 
     expect(result.avgFillPrice).toBe(30450.5);
     expect(result.fillStatus).toBe("Filled");
@@ -272,7 +272,7 @@ describe("handlePlacePerp", () => {
       .mockResolvedValueOnce({})
       .mockResolvedValueOnce(mockOrderResult);
 
-    const result = await handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 30, leverage: 10, sl: 29000, orderType: "Limit", price: 29500 }) as any;
+    const result = await handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 30, leverage: 10, sl: 29000, orderType: "Limit", price: 29500, confirm: "CONFIRM" }) as any;
 
     expect(result.fillStatus).toBe("New");
     expect(result.cumExecQty).toBe("0");
@@ -288,7 +288,7 @@ describe("handlePlacePerp", () => {
       .mockResolvedValueOnce(mockOrderResult)
       .mockRejectedValueOnce(new Error("trading-stop failed"));
 
-    const result = await handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 10, leverage: 5, sl: 29000, trailingStop: 500 });
+    const result = await handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 10, leverage: 5, sl: 29000, trailingStop: 500, confirm: "CONFIRM" });
 
     expect((result as any).partialSuccess).toBe(true);
   });
@@ -315,7 +315,7 @@ describe("handleClosePerp", () => {
     (client.signedGet as jest.Mock).mockResolvedValue(mockPositionList);
     (client.signedPost as jest.Mock).mockResolvedValue({ orderId: "close1", orderLinkId: "mcp-close" });
 
-    await handleClosePerp(client, { symbol: "BTCUSDT", side: "Buy" });
+    await handleClosePerp(client, { symbol: "BTCUSDT", side: "Buy", confirm: "CONFIRM" });
 
     const call = (client.signedPost as jest.Mock).mock.calls[0];
     expect(call[1].reduceOnly).toBe(true);
@@ -328,7 +328,7 @@ describe("handleClosePerp", () => {
     (client.signedGet as jest.Mock).mockResolvedValue(mockPositionList);
     (client.signedPost as jest.Mock).mockResolvedValue({ orderId: "close2", orderLinkId: "mcp-close2" });
 
-    await handleClosePerp(client, { symbol: "BTCUSDT", side: "Buy", percent: 50 });
+    await handleClosePerp(client, { symbol: "BTCUSDT", side: "Buy", percent: 50, confirm: "CONFIRM" });
 
     const call = (client.signedPost as jest.Mock).mock.calls[0];
     expect(parseFloat(call[1].qty)).toBeCloseTo(0.005, 3);
@@ -339,7 +339,7 @@ describe("handleClosePerp", () => {
     (client.signedGet as jest.Mock).mockResolvedValue(mockPositionList);
     (client.signedPost as jest.Mock).mockResolvedValue({ orderId: "close3", orderLinkId: "mcp-close3" });
 
-    await handleClosePerp(client, { symbol: "BTCUSDT", side: "Buy", qty: 0.005 });
+    await handleClosePerp(client, { symbol: "BTCUSDT", side: "Buy", qty: 0.005, confirm: "CONFIRM" });
 
     const call = (client.signedPost as jest.Mock).mock.calls[0];
     expect(parseFloat(call[1].qty)).toBeCloseTo(0.005, 3);
@@ -350,7 +350,7 @@ describe("handleClosePerp", () => {
     (client.signedGet as jest.Mock).mockResolvedValue(mockPositionList);
     (client.signedPost as jest.Mock).mockResolvedValue(mockOrderResult);
 
-    await handleClosePerp(client, { symbol: "BTCUSDT", side: "Buy", category: "linear" });
+    await handleClosePerp(client, { symbol: "BTCUSDT", side: "Buy", category: "linear", confirm: "CONFIRM" });
 
     const getCall = (client.signedGet as jest.Mock).mock.calls[0];
     expect(getCall[1].category).toBe("linear");
@@ -368,7 +368,7 @@ describe("handleManagePosition", () => {
     const client = new MockClient("k", "s", "u");
     (client.signedPost as jest.Mock).mockResolvedValue({});
 
-    await handleManagePosition(client, { symbol: "BTCUSDT", side: "Buy", updates: { sl: 29500, tp: 33000 } });
+    await handleManagePosition(client, { symbol: "BTCUSDT", side: "Buy", updates: { sl: 29500, tp: 33000 }, confirm: "CONFIRM" });
 
     const call = (client.signedPost as jest.Mock).mock.calls[0];
     expect(call[0]).toBe("/v5/position/trading-stop");
@@ -381,7 +381,7 @@ describe("handleManagePosition", () => {
     const client = new MockClient("k", "s", "u");
     (client.signedPost as jest.Mock).mockResolvedValue({});
 
-    await handleManagePosition(client, { symbol: "BTCUSDT", side: "Buy", updates: { sl: 0 } });
+    await handleManagePosition(client, { symbol: "BTCUSDT", side: "Buy", updates: { sl: 0 }, confirm: "CONFIRM" });
 
     const call = (client.signedPost as jest.Mock).mock.calls[0];
     expect(call[1].stopLoss).toBe("0");

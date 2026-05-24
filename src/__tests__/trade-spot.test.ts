@@ -31,7 +31,7 @@ describe("handlePlaceSpot", () => {
     (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
     (client.signedPost as jest.Mock).mockResolvedValue(mockOrderResult);
 
-    await handlePlaceSpot(client, { symbol: "BTCUSDT", side: "Buy", margin: 300, category: "spot" });
+    await handlePlaceSpot(client, { symbol: "BTCUSDT", side: "Buy", margin: 300, category: "spot", confirm: "CONFIRM" });
 
     const call = (client.signedPost as jest.Mock).mock.calls[0];
     // qty = 300 / 30000 = 0.01
@@ -44,7 +44,7 @@ describe("handlePlaceSpot", () => {
     (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
     (client.signedPost as jest.Mock).mockResolvedValue(mockOrderResult);
 
-    await handlePlaceSpot(client, { symbol: "BTCUSDT", side: "Buy", margin: 300, category: "spot" });
+    await handlePlaceSpot(client, { symbol: "BTCUSDT", side: "Buy", margin: 300, category: "spot", confirm: "CONFIRM" });
 
     const call = (client.signedPost as jest.Mock).mock.calls[0];
     expect(call[1].marketUnit).toBe("baseCoin");
@@ -56,7 +56,7 @@ describe("handlePlaceSpot", () => {
     (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
     (client.signedPost as jest.Mock).mockResolvedValue(mockOrderResult);
 
-    await handlePlaceSpot(client, { symbol: "BTCUSDT", side: "Sell", margin: 300, category: "spot" });
+    await handlePlaceSpot(client, { symbol: "BTCUSDT", side: "Sell", margin: 300, category: "spot", confirm: "CONFIRM" });
 
     const call = (client.signedPost as jest.Mock).mock.calls[0];
     expect(call[1].marketUnit).toBeUndefined();
@@ -68,7 +68,7 @@ describe("handlePlaceSpot", () => {
     (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
     (client.signedPost as jest.Mock).mockResolvedValue(mockOrderResult);
 
-    await handlePlaceSpot(client, { symbol: "BTCUSDT", side: "Buy", margin: 300, category: "spot_margin" });
+    await handlePlaceSpot(client, { symbol: "BTCUSDT", side: "Buy", margin: 300, category: "spot_margin", confirm: "CONFIRM" });
 
     const call = (client.signedPost as jest.Mock).mock.calls[0];
     expect(call[1].isLeverage).toBe(1);
@@ -80,7 +80,7 @@ describe("handlePlaceSpot", () => {
     (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
     (client.signedPost as jest.Mock).mockResolvedValue(mockOrderResult);
 
-    await handlePlaceSpot(client, { symbol: "BTCUSDT", side: "Buy", margin: 300, category: "spot" });
+    await handlePlaceSpot(client, { symbol: "BTCUSDT", side: "Buy", margin: 300, category: "spot", confirm: "CONFIRM" });
 
     const call = (client.signedPost as jest.Mock).mock.calls[0];
     expect(call[1].isLeverage).toBeUndefined();
@@ -92,7 +92,7 @@ describe("handlePlaceSpot", () => {
     (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
     (client.signedPost as jest.Mock).mockResolvedValue(mockOrderResult);
 
-    await handlePlaceSpot(client, { symbol: "BTCUSDT", side: "Buy", margin: 300, category: "spot", orderType: "Limit", price: 29000 });
+    await handlePlaceSpot(client, { symbol: "BTCUSDT", side: "Buy", margin: 300, category: "spot", orderType: "Limit", price: 29000, confirm: "CONFIRM" });
 
     const call = (client.signedPost as jest.Mock).mock.calls[0];
     expect(call[1].orderType).toBe("Limit");
@@ -144,15 +144,24 @@ describe("handlePlaceSpot", () => {
   it("throws when sl is provided for spot", async () => {
     const client = new MockClient("k", "s", "u");
     await expect(
-      handlePlaceSpot(client, { symbol: "BTCUSDT", side: "Buy", margin: 300, category: "spot", sl: 29000 } as any)
+      handlePlaceSpot(client, { symbol: "BTCUSDT", side: "Buy", margin: 300, category: "spot", sl: 29000, confirm: "CONFIRM" } as any)
     ).rejects.toMatchObject({ message: expect.stringContaining("not supported for spot") });
   });
 
   it("throws when Limit order has no price", async () => {
     const client = new MockClient("k", "s", "u");
     await expect(
-      handlePlaceSpot(client, { symbol: "BTCUSDT", side: "Buy", margin: 300, category: "spot", orderType: "Limit" })
+      handlePlaceSpot(client, { symbol: "BTCUSDT", side: "Buy", margin: 300, category: "spot", orderType: "Limit", confirm: "CONFIRM" })
     ).rejects.toMatchObject({ message: expect.stringContaining("price is required") });
+  });
+
+  it("confirm gate fires before request-shape validation (missing confirm + bad shape → confirm error first)", async () => {
+    const client = new MockClient("k", "s", "u");
+    // Limit without price AND missing confirm — must surface the confirm error,
+    // never the shape error, so callers can't infer the gate is bypassable.
+    await expect(
+      handlePlaceSpot(client, { symbol: "BTCUSDT", side: "Buy", margin: 300, category: "spot", orderType: "Limit" })
+    ).rejects.toMatchObject({ message: expect.stringContaining('confirm="CONFIRM"') });
   });
 
   it("throws when margin exceeds free USDT balance", async () => {
@@ -167,7 +176,7 @@ describe("handlePlaceSpot", () => {
     (client.signedGet as jest.Mock).mockResolvedValue(lowBalanceWallet);
 
     await expect(
-      handlePlaceSpot(client, { symbol: "BTCUSDT", side: "Buy", margin: 300, category: "spot" })
+      handlePlaceSpot(client, { symbol: "BTCUSDT", side: "Buy", margin: 300, category: "spot", confirm: "CONFIRM" })
     ).rejects.toMatchObject({ message: expect.stringContaining("Insufficient USDT balance") });
   });
 });
@@ -189,7 +198,7 @@ describe("handleCloseSpot", () => {
     (client.signedGet as jest.Mock).mockResolvedValue(mockBtcWallet);
     (client.signedPost as jest.Mock).mockResolvedValue(mockOrderResult);
 
-    const result = await handleCloseSpot(client, { symbol: "BTCUSDT" });
+    const result = await handleCloseSpot(client, { symbol: "BTCUSDT", confirm: "CONFIRM" });
 
     const getCall = (client.signedGet as jest.Mock).mock.calls[0];
     expect(getCall[1].coin).toBe("BTC");
@@ -204,7 +213,7 @@ describe("handleCloseSpot", () => {
     (client.signedGet as jest.Mock).mockResolvedValue(mockBtcWallet);
     (client.signedPost as jest.Mock).mockResolvedValue(mockOrderResult);
 
-    const result = await handleCloseSpot(client, { symbol: "BTCUSDT", percent: 50 });
+    const result = await handleCloseSpot(client, { symbol: "BTCUSDT", percent: 50, confirm: "CONFIRM" });
 
     expect(parseFloat(result.closedQty)).toBeCloseTo(0.25, 5);
   });
@@ -214,7 +223,7 @@ describe("handleCloseSpot", () => {
     (client.signedGet as jest.Mock).mockResolvedValue(mockBtcWallet);
     (client.signedPost as jest.Mock).mockResolvedValue(mockOrderResult);
 
-    const result = await handleCloseSpot(client, { symbol: "BTCUSDT", qty: 0.1 });
+    const result = await handleCloseSpot(client, { symbol: "BTCUSDT", qty: 0.1, confirm: "CONFIRM" });
 
     expect(parseFloat(result.closedQty)).toBeCloseTo(0.1, 5);
   });
@@ -224,7 +233,7 @@ describe("handleCloseSpot", () => {
     (client.signedGet as jest.Mock).mockResolvedValue(mockBtcWallet);
 
     await expect(
-      handleCloseSpot(client, { symbol: "BTCUSDT", qty: 1.0 })
+      handleCloseSpot(client, { symbol: "BTCUSDT", qty: 1.0, confirm: "CONFIRM" })
     ).rejects.toMatchObject({ message: expect.stringContaining("exceeds available") });
   });
 
@@ -239,7 +248,7 @@ describe("handleCloseSpot", () => {
     (client.signedGet as jest.Mock).mockResolvedValue(emptyWallet);
 
     await expect(
-      handleCloseSpot(client, { symbol: "BTCUSDT" })
+      handleCloseSpot(client, { symbol: "BTCUSDT", confirm: "CONFIRM" })
     ).rejects.toMatchObject({ message: expect.stringContaining("No BTC balance") });
   });
 });

@@ -75,7 +75,7 @@ describe("handlePlaceOptionTrade", () => {
         symbol: "BTC-25APR24-80000-C-USDT", // April 2024 — always expired
         side: "Buy",
         qty: 1,
-        orderType: "Market",
+        orderType: "Market", confirm: "CONFIRM"
       })
     ).rejects.toThrow("Contract BTC-25APR24-80000-C-USDT has expired");
   });
@@ -90,7 +90,7 @@ describe("handlePlaceOptionTrade", () => {
         symbol: SYMBOL,
         side: "Sell",
         qty: 1,
-        orderType: "Market",
+        orderType: "Market", confirm: "CONFIRM"
       })
     ).rejects.toThrow("Naked short options are disabled by default.");
   });
@@ -107,7 +107,7 @@ describe("handlePlaceOptionTrade", () => {
         symbol: SYMBOL,
         side: "Sell",
         qty: 2, // trying to sell 2 when only 1 long exists
-        orderType: "Market",
+        orderType: "Market", confirm: "CONFIRM"
       })
     ).rejects.toThrow("Naked short options are disabled by default.");
   });
@@ -124,7 +124,7 @@ describe("handlePlaceOptionTrade", () => {
       symbol: SYMBOL,
       side: "Sell",
       qty: 1,
-      orderType: "Market",
+      orderType: "Market", confirm: "CONFIRM"
     });
 
     expect((result as PlaceOptionTradeResult).orderId).toBe("opt-order-1");
@@ -201,7 +201,7 @@ describe("handlePlaceOptionTrade", () => {
       symbol: SYMBOL,
       side: "Sell",
       qty: 2, // exactly covered by 2 existing longs
-      orderType: "Market",
+      orderType: "Market", confirm: "CONFIRM"
     });
 
     expect((result as PlaceOptionTradeResult).orderId).toBe("opt-order-1");
@@ -219,7 +219,7 @@ describe("handlePlaceOptionTrade", () => {
         symbol: SYMBOL,
         side: "Buy",
         qty: 1, // needs 1200 USDC
-        orderType: "Market",
+        orderType: "Market", confirm: "CONFIRM"
       })
     ).rejects.toThrow("Insufficient USDC");
   });
@@ -235,7 +235,7 @@ describe("handlePlaceOptionTrade", () => {
         symbol: SYMBOL,
         side: "Buy",
         qty: 3, // 3 × 1200 = 3600 > 2500 cap
-        orderType: "Market",
+        orderType: "Market", confirm: "CONFIRM"
       })
     ).rejects.toThrow("Premium 3600 USDC exceeds 5%");
   });
@@ -250,7 +250,7 @@ describe("handlePlaceOptionTrade", () => {
       symbol: SYMBOL,
       side: "Buy",
       qty: 1,
-      orderType: "Market",
+      orderType: "Market", confirm: "CONFIRM"
     });
 
     expect((client.signedPost as jest.Mock).mock.calls[0][1]).toMatchObject({
@@ -274,7 +274,7 @@ describe("handlePlaceOptionTrade", () => {
 
     // With multiplier=1: estimatedPremium = 1 × 45 × 1 = 45 USDC > 9.94 → should throw
     await expect(
-      handlePlaceOptionTrade(client, { symbol: ETH_SYMBOL, side: "Buy", qty: 1, orderType: "Market" })
+      handlePlaceOptionTrade(client, { symbol: ETH_SYMBOL, side: "Buy", qty: 1, orderType: "Market", confirm: "CONFIRM" })
     ).rejects.toThrow("Insufficient USDC: need 45");
   });
 
@@ -287,6 +287,7 @@ describe("handlePlaceOptionTrade", () => {
         side: "Buy",
         qty: 1,
         orderType: "Limit",
+        confirm: "CONFIRM",
         // no price
       })
     ).rejects.toThrow("price is required for Limit orders");
@@ -324,7 +325,7 @@ describe("handleCloseOptionPosition", () => {
     await expect(
       handleCloseOptionPosition(client, {
         symbol: CLOSE_SYMBOL,
-        orderType: "Market",
+        orderType: "Market", confirm: "CONFIRM"
       })
     ).rejects.toThrow(`No open option position found for ${CLOSE_SYMBOL}`);
   });
@@ -338,7 +339,7 @@ describe("handleCloseOptionPosition", () => {
     await expect(
       handleCloseOptionPosition(client, {
         symbol: CLOSE_SYMBOL,
-        orderType: "Market",
+        orderType: "Market", confirm: "CONFIRM"
       })
     ).rejects.toThrow(`No open option position found for ${CLOSE_SYMBOL}`);
   });
@@ -351,7 +352,7 @@ describe("handleCloseOptionPosition", () => {
       handleCloseOptionPosition(client, {
         symbol: CLOSE_SYMBOL,
         qty: 5, // exceeds position size of 2
-        orderType: "Market",
+        orderType: "Market", confirm: "CONFIRM"
       })
     ).rejects.toThrow("Close qty 5 exceeds position size 2");
   });
@@ -399,7 +400,7 @@ describe("handleCloseOptionPosition", () => {
 
     const result = await handleCloseOptionPosition(client, {
       symbol: CLOSE_SYMBOL,
-      orderType: "Market",
+      orderType: "Market", confirm: "CONFIRM"
     });
 
     expect((result as CloseOptionResult).closedQty).toBe(2);
@@ -414,7 +415,7 @@ describe("handleCloseOptionPosition", () => {
 
     await handleCloseOptionPosition(client, {
       symbol: CLOSE_SYMBOL,
-      orderType: "Market",
+      orderType: "Market", confirm: "CONFIRM"
     });
 
     const body = (client.signedPost as jest.Mock).mock.calls[0][1];
@@ -431,7 +432,7 @@ describe("handleCloseOptionPosition", () => {
     const result = await handleCloseOptionPosition(client, {
       symbol: CLOSE_SYMBOL,
       qty: 1,
-      orderType: "Market",
+      orderType: "Market", confirm: "CONFIRM"
     });
 
     expect((result as CloseOptionResult).closedQty).toBe(1);

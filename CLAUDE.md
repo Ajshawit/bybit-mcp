@@ -38,8 +38,8 @@ defaults true and live submit requires `RFQ_ENABLE_WRITES=true` + eligibility + 
 
 ## Safety Rails (do not weaken without explicit instruction)
 
-- Execution tools (`place_trade`, `close_position`, `manage_position`, `place_option_trade`, `close_option_position`) require explicit `CONFIRM` and support `dry_run=true`.
-- `cancel_order` and SL/TP-cancel are also confirmation-gated.
+- Execution tools (`place_trade`, `close_position`, `manage_position`, `place_option_trade`, `close_option_position`) require a schema-validated `confirm: "CONFIRM"` param (exact, case-sensitive) for live submission and support `dry_run=true` (no confirm needed for previews) — `src/tools/confirm.ts`.
+- `cancel_order` and SL/TP-cancel are also `confirm`-gated. RFQ `cancel_rfq` is intentionally exempt (risk-reducing).
 - Naked short options blocked unless `OPTIONS_ALLOW_NAKED_SHORT=true` or an offsetting long exists (catches partial naked shorts) — `src/tools/options/trade.ts`.
 - RFQ writes (`create_rfq`, `execute_quote`) fail closed: `dry_run` defaults true, live submit needs `RFQ_ENABLE_WRITES=true` (kill-switch, off until endpoint paths are live-verified) + eligibility + combo-risk gate. `cancel_rfq` is exempt (risk-reducing). `assess_combo_risk` maxLoss is ±30%-grid-bounded — trust `uncovered`/`allowed`, not the magnitude — `src/tools/rfq/{trade,risk}.ts`.
 

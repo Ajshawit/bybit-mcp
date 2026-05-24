@@ -1,4 +1,5 @@
 import { BybitClient } from "../client";
+import { assertConfirm } from "./confirm";
 
 export type OrderCategory = "linear" | "inverse" | "spot" | "option";
 
@@ -85,9 +86,10 @@ export async function handleListOpenOrders(
 
 export async function handleCancelOrder(
   client: BybitClient,
-  params: { symbol: string; orderId: string; category?: OrderCategory }
+  params: { symbol: string; orderId: string; category?: OrderCategory; confirm?: string }
 ): Promise<{ cancelled: boolean; orderId: string; orderLinkId: string; symbol: string; serverTimestamp: string }> {
-  const { symbol, orderId, category = "linear" } = params;
+  const { symbol, orderId, category = "linear", confirm } = params;
+  assertConfirm(confirm, false, "cancel_order");
   const res = await client.signedPost<BybitCancelledItem>("/v5/order/cancel", {
     category, symbol, orderId,
   });

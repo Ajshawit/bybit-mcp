@@ -22,6 +22,7 @@ export interface PlaceTradeParams {
   trailingActivatePrice?: number;
   notes?: string;
   dry_run?: boolean;
+  confirm?: string;
 }
 
 export interface ClosePositionParams {
@@ -31,6 +32,7 @@ export interface ClosePositionParams {
   percent?: number;
   qty?: number;
   notes?: string;
+  confirm?: string;
 }
 
 export async function handlePlaceTrade(

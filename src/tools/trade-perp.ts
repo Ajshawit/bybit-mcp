@@ -3,6 +3,7 @@ import { BybitClient, BybitError } from "../client";
 import { positionModeCache } from "../cache";
 import { floorToStep } from "../util";
 import { ensureInstrumentInfo, detectPositionIdx, fetchFillSnapshot, PerpCategory } from "./trade-shared";
+import { assertConfirm } from "./confirm";
 import {
   TickersResult, WalletBalanceResult, OrderCreateResult,
   PlaceTradeResult, ClosePositionResult, DryRunResult,
@@ -22,6 +23,7 @@ export interface PlacePerpParams {
   trailingActivatePrice?: number;
   notes?: string;
   dry_run?: boolean;
+  confirm?: string;
 }
 
 // Assumes standard inverse perp symbols end in "USD" (e.g. BTCUSD → BTC).
@@ -38,8 +40,14 @@ export async function handlePlacePerp(
     symbol, side, margin, category = "linear",
     orderType = "Market", price: limitPrice,
     leverage, sl, tp, trailingStop, trailingActivatePrice,
-    notes, dry_run = false,
+    notes, dry_run = false, confirm,
   } = params;
+
+  // assertConfirm must come before any other request-shape validation so a
+  // missing/invalid confirm always fails first — never let a more-specific
+  // shape error (e.g. "price required for limit") hide the fact that the
+  // caller also skipped the confirm gate.
+  assertConfirm(confirm, dry_run, "place_trade");
 
   if (orderType === "Limit" && limitPrice == null) {
     throw new Error("price is required for limit orders");
@@ -204,13 +212,16 @@ export interface ClosePositionParams {
   percent?: number;
   qty?: number;
   notes?: string;
+  confirm?: string;
 }
 
 export async function handleClosePerp(
   client: BybitClient,
   params: ClosePositionParams
 ): Promise<ClosePositionResult> {
-  const { symbol, side, category = "linear", percent = 100, qty: explicitQty, notes } = params;
+  const { symbol, side, category = "linear", percent = 100, qty: explicitQty, notes, confirm } = params;
+
+  assertConfirm(confirm, false, "close_position");
 
   const [positionIdxInit, inst] = await Promise.all([
     detectPositionIdx(client, category, symbol, side),
@@ -281,17 +292,20 @@ export interface ManagePositionParams {
     trailingActivatePrice?: number;
   };
   notes?: string;
+  confirm?: string;
 }
 
 export async function handleManagePosition(
   client: BybitClient,
   params: ManagePositionParams
 ): Promise<{ updated: boolean; symbol: string; serverTimestamp: string; notes?: string }> {
-  const { symbol, side, category = "linear", updates, notes } = params;
+  const { symbol, side, category = "linear", updates, notes, confirm } = params;
 
   if (category === "spot" || category === "spot_margin") {
     throw new Error("manage_position is not supported for spot — spot has no persistent position");
   }
+
+  assertConfirm(confirm, false, "manage_position");
 
   const positionIdx = await detectPositionIdx(client, category, symbol, side);
 

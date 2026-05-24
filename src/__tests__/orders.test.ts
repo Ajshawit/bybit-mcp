@@ -1,8 +1,43 @@
-import { handleGetClosedTrades } from "../tools/orders";
+import { handleGetClosedTrades, handleCancelOrder } from "../tools/orders";
 import { BybitClient } from "../client";
 
 jest.mock("../client");
 const MockClient = BybitClient as jest.MockedClass<typeof BybitClient>;
+
+describe("handleCancelOrder", () => {
+  it("throws when confirm is missing — gate fires before any signed POST", async () => {
+    const client = new MockClient("k", "s", "u");
+    await expect(
+      handleCancelOrder(client, { symbol: "BTCUSDT", orderId: "abc123" })
+    ).rejects.toThrow(/cancel_order requires confirm="CONFIRM"/);
+    expect(client.signedPost).not.toHaveBeenCalled();
+  });
+
+  it("throws when confirm is wrong case", async () => {
+    const client = new MockClient("k", "s", "u");
+    await expect(
+      handleCancelOrder(client, { symbol: "BTCUSDT", orderId: "abc123", confirm: "confirm" })
+    ).rejects.toThrow(/case-sensitive/);
+    expect(client.signedPost).not.toHaveBeenCalled();
+  });
+
+  it("submits cancel when confirm=CONFIRM and returns canonical shape", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.signedPost as jest.Mock).mockResolvedValue({ orderId: "abc123", orderLinkId: "mcp-x" });
+
+    const res = await handleCancelOrder(client, {
+      symbol: "BTCUSDT", orderId: "abc123", confirm: "CONFIRM",
+    });
+
+    expect(client.signedPost).toHaveBeenCalledWith(
+      "/v5/order/cancel",
+      expect.objectContaining({ category: "linear", symbol: "BTCUSDT", orderId: "abc123" }),
+    );
+    expect(res).toMatchObject({
+      cancelled: true, orderId: "abc123", orderLinkId: "mcp-x", symbol: "BTCUSDT",
+    });
+  });
+});
 
 describe("handleGetClosedTrades", () => {
   const sampleClosedPnl = {

@@ -153,7 +153,7 @@ describe("handleCreateRfq", () => {
 
   it("blocks live submission when RFQ_ENABLE_WRITES is unset", async () => {
     await expect(
-      handleCreateRfq(newClient(), { counterparties: ["DESK"], list: [optionLeg], dry_run: false })
+      handleCreateRfq(newClient(), { counterparties: ["DESK"], list: [optionLeg], dry_run: false, confirm: "CONFIRM" })
     ).rejects.toThrow(/Live RFQ submission is disabled/);
   });
 
@@ -161,7 +161,7 @@ describe("handleCreateRfq", () => {
     process.env.RFQ_ENABLE_WRITES = "true";
     await expect(
       handleCreateRfq(newClient({ accountInfo: ineligibleInfo }), {
-        counterparties: ["DESK"], list: [optionLeg], dry_run: false,
+        counterparties: ["DESK"], list: [optionLeg], dry_run: false, confirm: "CONFIRM"
       })
     ).rejects.toThrow(/not RFQ-eligible/);
   });
@@ -173,7 +173,7 @@ describe("handleCreateRfq", () => {
       handleCreateRfq(newClient(), {
         counterparties: ["DESK"],
         list: [{ category: "option", symbol: "BTC-25APR26-80000-C-USDT", side: "sell", qty: "1" }],
-        dry_run: false,
+        dry_run: false, confirm: "CONFIRM"
       })
     ).rejects.toThrow(/risk gate blocked/);
   });
@@ -209,7 +209,7 @@ describe("handleCreateRfq", () => {
     process.env.RFQ_ALLOW_UNCOVERED = "true";
     const client = newClient();
     const res = await handleCreateRfq(client, {
-      counterparties: ["DESK"], list: [optionLeg], dry_run: false,
+      counterparties: ["DESK"], list: [optionLeg], dry_run: false, confirm: "CONFIRM"
     });
     expect(client.signedPost).toHaveBeenCalledWith("/v5/rfq/create-rfq", expect.any(Object));
     if ("dryRun" in res && res.dryRun) throw new Error("expected live result");
@@ -266,7 +266,7 @@ describe("handleExecuteQuote", () => {
 
   it("blocks live execution without RFQ_ENABLE_WRITES", async () => {
     await expect(
-      handleExecuteQuote(newClient(), { rfqId: "r", quoteId: "q", quoteSide: "buy", dry_run: false })
+      handleExecuteQuote(newClient(), { rfqId: "r", quoteId: "q", quoteSide: "buy", dry_run: false, confirm: "CONFIRM" })
     ).rejects.toThrow(/Live RFQ submission is disabled/);
   });
 
@@ -274,7 +274,7 @@ describe("handleExecuteQuote", () => {
     process.env.RFQ_ENABLE_WRITES = "true";
     const client = newClient();
     const res = await handleExecuteQuote(client, {
-      rfqId: "r", quoteId: "q", quoteSide: "buy", dry_run: false,
+      rfqId: "r", quoteId: "q", quoteSide: "buy", dry_run: false, confirm: "CONFIRM"
     });
     expect(client.signedPost).toHaveBeenCalledWith("/v5/rfq/execute-quote", {
       rfqId: "r", quoteId: "q", quoteSide: "buy",
