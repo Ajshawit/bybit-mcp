@@ -201,6 +201,10 @@ export interface DryRunResult {
   serverTimestamp: string;
   qtyRoundedDown?: boolean;
   qtyStep?: string;
+  // Conditional / trigger order fields (only set when triggerPrice is provided).
+  triggerPrice?: string;
+  triggerBy?: "LastPrice" | "MarkPrice" | "IndexPrice";
+  triggerDirection?: 1 | 2;
 }
 
 // Raw API response type for instruments-info TradFi discovery queries.

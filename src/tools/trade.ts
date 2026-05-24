@@ -20,6 +20,9 @@ export interface PlaceTradeParams {
   tp?: number;
   trailingStop?: number;
   trailingActivatePrice?: number;
+  triggerPrice?: number;
+  triggerBy?: "LastPrice" | "MarkPrice" | "IndexPrice";
+  triggerDirection?: 1 | 2;
   notes?: string;
   dry_run?: boolean;
   confirm?: string;

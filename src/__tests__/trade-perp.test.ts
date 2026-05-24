@@ -294,6 +294,179 @@ describe("handlePlacePerp", () => {
   });
 });
 
+describe("handlePlacePerp / conditional (trigger orders)", () => {
+  beforeEach(() => {
+    mockEnsure.mockResolvedValue(mockInst);
+    mockDetect.mockResolvedValue(1);
+    mockFetchFill.mockResolvedValue({ avgFillPrice: 32000, fillStatus: "Untriggered", cumExecQty: "0" });
+  });
+
+  it("Buy stop above market: auto-derives triggerDirection=1 (rises)", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker); // lastPrice 30000
+    (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
+    (client.signedPost as jest.Mock)
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce(mockOrderResult);
+
+    await handlePlacePerp(client, {
+      symbol: "BTCUSDT", side: "Buy", margin: 30, leverage: 10, sl: 29000,
+      triggerPrice: 32000, confirm: "CONFIRM",
+    });
+
+    const orderCall = (client.signedPost as jest.Mock).mock.calls[1];
+    expect(orderCall[1].triggerPrice).toBe("32000");
+    expect(orderCall[1].triggerDirection).toBe(1);
+    expect(orderCall[1].triggerBy).toBe("LastPrice");
+  });
+
+  it("Sell stop below market: auto-derives triggerDirection=2 (falls)", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker); // lastPrice 30000
+    (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
+    (client.signedPost as jest.Mock)
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce(mockOrderResult);
+
+    await handlePlacePerp(client, {
+      symbol: "BTCUSDT", side: "Sell", margin: 30, leverage: 10, sl: 31000,
+      triggerPrice: 28000, confirm: "CONFIRM",
+    });
+
+    const orderCall = (client.signedPost as jest.Mock).mock.calls[1];
+    expect(orderCall[1].triggerPrice).toBe("28000");
+    expect(orderCall[1].triggerDirection).toBe(2);
+  });
+
+  it("explicit triggerDirection overrides auto-derivation", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
+    (client.signedPost as jest.Mock)
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce(mockOrderResult);
+
+    // triggerPrice < market would auto-derive direction=2; override to 1.
+    await handlePlacePerp(client, {
+      symbol: "BTCUSDT", side: "Buy", margin: 30, leverage: 10, sl: 29000,
+      triggerPrice: 28000, triggerDirection: 1, confirm: "CONFIRM",
+    });
+
+    const orderCall = (client.signedPost as jest.Mock).mock.calls[1];
+    expect(orderCall[1].triggerDirection).toBe(1);
+  });
+
+  it("propagates custom triggerBy (MarkPrice)", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
+    (client.signedPost as jest.Mock)
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce(mockOrderResult);
+
+    await handlePlacePerp(client, {
+      symbol: "BTCUSDT", side: "Buy", margin: 30, leverage: 10, sl: 29000,
+      triggerPrice: 32000, triggerBy: "MarkPrice", confirm: "CONFIRM",
+    });
+
+    const orderCall = (client.signedPost as jest.Mock).mock.calls[1];
+    expect(orderCall[1].triggerBy).toBe("MarkPrice");
+  });
+
+  it("Limit + triggerPrice creates a stop-limit (both price and triggerPrice present)", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
+    (client.signedPost as jest.Mock)
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce(mockOrderResult);
+
+    await handlePlacePerp(client, {
+      symbol: "BTCUSDT", side: "Buy", margin: 30, leverage: 10, sl: 29000,
+      orderType: "Limit", price: 32100, triggerPrice: 32000,
+      confirm: "CONFIRM",
+    });
+
+    const orderCall = (client.signedPost as jest.Mock).mock.calls[1];
+    expect(orderCall[1].orderType).toBe("Limit");
+    expect(orderCall[1].price).toBe("32100");
+    expect(orderCall[1].triggerPrice).toBe("32000");
+  });
+
+  it("rejects trailingStop on a conditional order (same rationale as Limit)", async () => {
+    const client = new MockClient("k", "s", "u");
+    await expect(
+      handlePlacePerp(client, {
+        symbol: "BTCUSDT", side: "Buy", margin: 30, leverage: 10, sl: 29000,
+        triggerPrice: 32000, trailingStop: 500,
+        confirm: "CONFIRM",
+      })
+    ).rejects.toMatchObject({ message: expect.stringContaining("Trailing stops cannot be set") });
+  });
+
+  it("dry_run surfaces triggerPrice, triggerBy, triggerDirection in the preview", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
+
+    const result = await handlePlacePerp(client, {
+      symbol: "BTCUSDT", side: "Buy", margin: 30, leverage: 10, sl: 29000,
+      triggerPrice: 32000, dry_run: true,
+    }) as any;
+
+    expect(result.dryRun).toBe(true);
+    expect(result.triggerPrice).toBe("32000");
+    expect(result.triggerBy).toBe("LastPrice");
+    expect(result.triggerDirection).toBe(1);
+  });
+
+  it("dry_run warns when triggerPrice is within 0.1% of market (would fire immediately)", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker); // 30000
+    (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
+
+    // 30015 is 0.05% above 30000 — inside the 0.1% epsilon.
+    const result = await handlePlacePerp(client, {
+      symbol: "BTCUSDT", side: "Buy", margin: 30, leverage: 10, sl: 29000,
+      triggerPrice: 30015, dry_run: true,
+    }) as any;
+
+    expect(result.warnings.some((w: string) => /within 0\.1% of current price/.test(w))).toBe(true);
+  });
+
+  it("dry_run does NOT warn when triggerPrice is comfortably outside the epsilon", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker); // 30000
+    (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
+
+    const result = await handlePlacePerp(client, {
+      symbol: "BTCUSDT", side: "Buy", margin: 30, leverage: 10, sl: 29000,
+      triggerPrice: 32000, dry_run: true,
+    }) as any;
+
+    expect(result.warnings.some((w: string) => /within 0\.1% of current price/.test(w))).toBe(false);
+  });
+
+  it("omits trigger fields from order body when triggerPrice not provided", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
+    (client.signedPost as jest.Mock)
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce(mockOrderResult);
+
+    await handlePlacePerp(client, {
+      symbol: "BTCUSDT", side: "Buy", margin: 30, leverage: 10, sl: 29000,
+      confirm: "CONFIRM",
+    });
+
+    const orderCall = (client.signedPost as jest.Mock).mock.calls[1];
+    expect(orderCall[1].triggerPrice).toBeUndefined();
+    expect(orderCall[1].triggerDirection).toBeUndefined();
+    expect(orderCall[1].triggerBy).toBeUndefined();
+  });
+});
+
 const mockPositionList = {
   list: [{
     symbol: "BTCUSDT", side: "Buy" as const, size: "0.01", avgPrice: "30000",

@@ -181,6 +181,74 @@ describe("handlePlaceSpot", () => {
   });
 });
 
+describe("handlePlaceSpot / conditional (trigger orders)", () => {
+  beforeEach(() => {
+    mockEnsure.mockResolvedValue(mockInst);
+    mockFetchFill.mockResolvedValue({ avgFillPrice: 32000, fillStatus: "Untriggered", cumExecQty: "0" });
+  });
+
+  it("Buy stop above market sets orderFilter=StopOrder + triggerPrice + auto direction=1", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker); // 30000
+    (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
+    (client.signedPost as jest.Mock).mockResolvedValue(mockOrderResult);
+
+    await handlePlaceSpot(client, {
+      symbol: "BTCUSDT", side: "Buy", margin: 300, category: "spot",
+      triggerPrice: 32000, confirm: "CONFIRM",
+    });
+
+    const call = (client.signedPost as jest.Mock).mock.calls[0];
+    expect(call[1].orderFilter).toBe("StopOrder");
+    expect(call[1].triggerPrice).toBe("32000");
+    expect(call[1].triggerDirection).toBe(1);
+  });
+
+  it("dry_run surfaces trigger fields for spot conditional", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
+
+    const result = await handlePlaceSpot(client, {
+      symbol: "BTCUSDT", side: "Buy", margin: 300, category: "spot",
+      triggerPrice: 32000, dry_run: true,
+    }) as any;
+
+    expect(result.triggerPrice).toBe("32000");
+    expect(result.triggerDirection).toBe(1);
+  });
+
+  it("dry_run warns when triggerPrice is within 0.1% of market", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker); // 30000
+    (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
+
+    // 30020 ≈ 0.067% above 30000 — inside the epsilon.
+    const result = await handlePlaceSpot(client, {
+      symbol: "BTCUSDT", side: "Buy", margin: 300, category: "spot",
+      triggerPrice: 30020, dry_run: true,
+    }) as any;
+
+    expect(result.warnings.some((w: string) => /within 0\.1% of current price/.test(w))).toBe(true);
+  });
+
+  it("omits orderFilter when triggerPrice not provided (plain spot order)", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
+    (client.signedPost as jest.Mock).mockResolvedValue(mockOrderResult);
+
+    await handlePlaceSpot(client, {
+      symbol: "BTCUSDT", side: "Buy", margin: 300, category: "spot",
+      confirm: "CONFIRM",
+    });
+
+    const call = (client.signedPost as jest.Mock).mock.calls[0];
+    expect(call[1].orderFilter).toBeUndefined();
+    expect(call[1].triggerPrice).toBeUndefined();
+  });
+});
+
 const mockBtcWallet = {
   list: [{
     accountType: "UNIFIED", totalEquity: "1", totalMaintenanceMargin: "0",

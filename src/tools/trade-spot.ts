@@ -18,9 +18,31 @@ export interface PlaceSpotParams {
   sl?: number;
   tp?: number;
   trailingStop?: number;
+  triggerPrice?: number;
+  triggerBy?: "LastPrice" | "MarkPrice" | "IndexPrice";
+  triggerDirection?: 1 | 2;
   notes?: string;
   dry_run?: boolean;
   confirm?: string;
+}
+
+function resolveTriggerDirection(
+  explicit: 1 | 2 | undefined,
+  triggerPrice: number,
+  marketPrice: number,
+): 1 | 2 {
+  if (explicit === 1 || explicit === 2) return explicit;
+  return triggerPrice >= marketPrice ? 1 : 2;
+}
+
+// Mirrors the perp helper. See trade-perp.ts for the rationale.
+const TRIGGER_NEAR_MARKET_EPSILON = 0.001;
+
+function nearMarketWarning(triggerPrice: number, marketPrice: number): string | null {
+  if (marketPrice <= 0) return null;
+  const drift = Math.abs(triggerPrice - marketPrice) / marketPrice;
+  if (drift >= TRIGGER_NEAR_MARKET_EPSILON) return null;
+  return `triggerPrice ${triggerPrice} is within ${(TRIGGER_NEAR_MARKET_EPSILON * 100).toFixed(1)}% of current price ${marketPrice} — the order will likely fire immediately or be rejected as already-triggered. Use a wider trigger or place a regular order.`;
 }
 
 export async function handlePlaceSpot(
@@ -30,13 +52,20 @@ export async function handlePlaceSpot(
   const {
     symbol, side, margin, category,
     orderType = "Market", price: limitPrice,
-    sl, tp, trailingStop, notes, dry_run = false, confirm,
+    sl, tp, trailingStop,
+    triggerPrice, triggerBy = "LastPrice", triggerDirection: explicitDirection,
+    notes, dry_run = false, confirm,
   } = params;
 
   // assertConfirm fires before any other shape validation so a missing
   // confirm always reports the gate error first.
   assertConfirm(confirm, dry_run, "place_trade");
 
+  // This guard subsumes the "no trailing on conditional" check that the perp
+  // handler has to make explicitly: spot rejects ANY trailingStop here, so a
+  // conditional-spot order can never combine with one. If spot ever gains
+  // real trailing-stop support, re-add a dedicated triggerPrice+trailingStop
+  // throw alongside it (mirroring trade-perp.ts).
   if (sl != null || tp != null || trailingStop != null) {
     throw new Error("SL/TP/trailing stop not supported for spot — no position to attach to");
   }
@@ -74,6 +103,15 @@ export async function handlePlaceSpot(
     if (pct > 20 && margin <= freeUsdt) {
       warnings.push(`Order uses ${pct.toFixed(0)}% of free USDT balance (${freeUsdt.toFixed(2)} USDT)`);
     }
+    if (triggerPrice != null) {
+      const w = nearMarketWarning(triggerPrice, marketPrice);
+      if (w) warnings.push(w);
+    }
+    const triggerFields = triggerPrice != null ? {
+      triggerPrice: String(triggerPrice),
+      triggerBy,
+      triggerDirection: resolveTriggerDirection(explicitDirection, triggerPrice, marketPrice),
+    } : {};
     return {
       dryRun: true, category, symbol, side, orderType,
       computedQty: qty, executionPrice: String(execPrice),
@@ -83,6 +121,7 @@ export async function handlePlaceSpot(
       serverTimestamp: new Date().toISOString(),
       qtyRoundedDown: parseFloat(qty) < rawQtyNum,
       qtyStep: inst.qtyStep,
+      ...triggerFields,
     };
   }
 
@@ -95,9 +134,22 @@ export async function handlePlaceSpot(
   const orderBody: Record<string, unknown> = {
     category: "spot", symbol, side, orderType, qty,
   };
+  if (triggerPrice != null) {
+    orderBody.orderFilter = "StopOrder";
+    orderBody.triggerPrice = String(triggerPrice);
+    orderBody.triggerBy = triggerBy;
+    orderBody.triggerDirection = resolveTriggerDirection(explicitDirection, triggerPrice, marketPrice);
+  }
   if (orderType === "Limit") {
     orderBody.price = String(limitPrice);
   } else if (side === "Buy") {
+    // marketUnit:"baseCoin" tells Bybit the `qty` for a spot market Buy is in
+    // base coin (not quote USDT). We keep this on stop-market Buys too so the
+    // dry-run computedQty matches what fills at trigger time, instead of the
+    // exchange interpreting qty as USDT and buying a different amount of base
+    // coin. Whether Bybit honours marketUnit on orderFilter=StopOrder is not
+    // documented; if it 400s on a live submission, switch stop-market Buys to
+    // stop-Limit (same triggerPrice with limitPrice = triggerPrice + slippage).
     orderBody.marketUnit = "baseCoin";
   }
   if (category === "spot_margin") orderBody.isLeverage = 1;

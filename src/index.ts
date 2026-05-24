@@ -130,7 +130,7 @@ function createServer(
       },
       {
         name: "place_trade",
-        description: "Place a trade on a Bybit linear perp, inverse perp, or spot market. Supports market and limit entry orders. For inverse perps the `margin` field is in base coin units (e.g. BTC for BTCUSD). CONFIRMATION REQUIRED: (1) Present the full trade plan — symbol, category, side, margin, leverage (perps), SL (perps), TP, estimated position size. (2) Wait for the user to reply with 'CONFIRM'. (3) Only call this tool after receiving explicit CONFIRM. Never call this tool in the same turn as presenting the trade plan. Recommended workflow: present plan → CONFIRM → call with dry_run=true → verify computedQty, notional, and warnings → call again with dry_run=false. The dry_run call does not require a second CONFIRM. If dry_run returns wouldSubmit: false, do not proceed without addressing the warnings. TradFi: xStock tokens use category=spot (e.g. TSLAXUSDT — tokenized equities, no leverage or SL required). Stock perpetuals and commodity perpetuals use category=linear (e.g. TSLAPUSDT for TSLA perp, XAUUSDT for gold). Call list_tradfi_instruments to confirm the exact symbol before the first TradFi trade in a session.",
+        description: "Place a trade on a Bybit linear perp, inverse perp, or spot market. Supports market, limit, and conditional/stop entry orders (pass `triggerPrice` to create a stop-market or stop-limit entry — e.g. breakout long: side=Buy, triggerPrice above current price). For inverse perps the `margin` field is in base coin units (e.g. BTC for BTCUSD). CONFIRMATION REQUIRED: (1) Present the full trade plan — symbol, category, side, margin, leverage (perps), SL (perps), TP, estimated position size. (2) Wait for the user to reply with 'CONFIRM'. (3) Only call this tool after receiving explicit CONFIRM. Never call this tool in the same turn as presenting the trade plan. Recommended workflow: present plan → CONFIRM → call with dry_run=true → verify computedQty, notional, and warnings → call again with dry_run=false. The dry_run call does not require a second CONFIRM. If dry_run returns wouldSubmit: false, do not proceed without addressing the warnings. TradFi: xStock tokens use category=spot (e.g. TSLAXUSDT — tokenized equities, no leverage or SL required). Stock perpetuals and commodity perpetuals use category=linear (e.g. TSLAPUSDT for TSLA perp, XAUUSDT for gold). Call list_tradfi_instruments to confirm the exact symbol before the first TradFi trade in a session.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -145,6 +145,9 @@ function createServer(
             tp: { type: "number", description: "Take profit price. Optional, perps only." },
             trailingStop: { type: "number", description: "Trailing stop distance in quote currency. Optional, perps only." },
             trailingActivatePrice: { type: "number", description: "Price at which trailing stop activates. Optional, perps only." },
+            triggerPrice: { type: "number", description: "Optional. Turns the order into a conditional/stop entry — the order rests until last/mark/index price crosses this level, then submits as the chosen orderType (Market = stop-market, Limit = stop-limit). Use for breakout/breakdown setups." },
+            triggerBy: { type: "string", enum: ["LastPrice", "MarkPrice", "IndexPrice"], description: "Which price feed the trigger watches. Default: LastPrice." },
+            triggerDirection: { type: "number", enum: [1, 2], description: "1 = trigger when price rises to triggerPrice; 2 = falls to. Auto-derived from triggerPrice vs current market price if omitted." },
             notes: { type: "string", description: "Trade rationale — echoed back in response" },
             dry_run: { type: "boolean", description: "If true, returns computed order details without submitting. Default: false. executionPrice in the result is the current last-traded price, not a slippage-adjusted estimate — actual fill may differ." },
             confirm: { type: "string", description: "Must equal the literal string 'CONFIRM' (case-sensitive, no whitespace) to submit live. Schema-enforced. Omit when dry_run=true." },
@@ -547,6 +550,9 @@ function createServer(
             tp: a.tp as number | undefined,
             trailingStop: a.trailingStop as number | undefined,
             trailingActivatePrice: a.trailingActivatePrice as number | undefined,
+            triggerPrice: a.triggerPrice as number | undefined,
+            triggerBy: a.triggerBy as "LastPrice" | "MarkPrice" | "IndexPrice" | undefined,
+            triggerDirection: a.triggerDirection as 1 | 2 | undefined,
             notes: a.notes as string | undefined,
             dry_run: a.dry_run as boolean | undefined,
             confirm: a.confirm as string | undefined,

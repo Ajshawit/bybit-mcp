@@ -21,9 +21,36 @@ export interface PlacePerpParams {
   tp?: number;
   trailingStop?: number;
   trailingActivatePrice?: number;
+  triggerPrice?: number;
+  triggerBy?: "LastPrice" | "MarkPrice" | "IndexPrice";
+  triggerDirection?: 1 | 2;
   notes?: string;
   dry_run?: boolean;
   confirm?: string;
+}
+
+// Auto-derive triggerDirection from triggerPrice vs current market price.
+// 1 = rises through, 2 = falls through. Returns the explicit value if provided.
+function resolveTriggerDirection(
+  explicit: 1 | 2 | undefined,
+  triggerPrice: number,
+  marketPrice: number,
+): 1 | 2 {
+  if (explicit === 1 || explicit === 2) return explicit;
+  return triggerPrice >= marketPrice ? 1 : 2;
+}
+
+// If triggerPrice is within this fraction of marketPrice the order will almost
+// certainly fire immediately (or be rejected as "already triggered"); the
+// operator confirms a "conditional entry" but gets a near-market order, which
+// is usually a mistake. 0.1% = 10 bps.
+const TRIGGER_NEAR_MARKET_EPSILON = 0.001;
+
+function nearMarketWarning(triggerPrice: number, marketPrice: number): string | null {
+  if (marketPrice <= 0) return null;
+  const drift = Math.abs(triggerPrice - marketPrice) / marketPrice;
+  if (drift >= TRIGGER_NEAR_MARKET_EPSILON) return null;
+  return `triggerPrice ${triggerPrice} is within ${(TRIGGER_NEAR_MARKET_EPSILON * 100).toFixed(1)}% of current price ${marketPrice} — the order will likely fire immediately or be rejected as already-triggered. Use a wider trigger or place a regular order.`;
 }
 
 // Assumes standard inverse perp symbols end in "USD" (e.g. BTCUSD → BTC).
@@ -40,6 +67,7 @@ export async function handlePlacePerp(
     symbol, side, margin, category = "linear",
     orderType = "Market", price: limitPrice,
     leverage, sl, tp, trailingStop, trailingActivatePrice,
+    triggerPrice, triggerBy = "LastPrice", triggerDirection: explicitDirection,
     notes, dry_run = false, confirm,
   } = params;
 
@@ -55,6 +83,11 @@ export async function handlePlacePerp(
   if (orderType === "Limit" && trailingStop != null) {
     throw new Error(
       "Trailing stops cannot be set on resting limit orders — Bybit requires an open position first. Place the order, then add trailing via manage_position after fill."
+    );
+  }
+  if (triggerPrice != null && trailingStop != null) {
+    throw new Error(
+      "Trailing stops cannot be set on conditional orders — Bybit requires an open position first. Place the conditional order, then add trailing via manage_position after the trigger fills."
     );
   }
 
@@ -107,6 +140,15 @@ export async function handlePlacePerp(
     }
     const pct = (margin / freeBalance) * 100;
     if (pct > 20 && margin <= freeBalance) warnings.push(`Order uses ${pct.toFixed(0)}% of free ${marginCoin} balance (${freeBalance.toFixed(4)} ${marginCoin})`);
+    if (triggerPrice != null) {
+      const w = nearMarketWarning(triggerPrice, marketPrice);
+      if (w) warnings.push(w);
+    }
+    const triggerFields = triggerPrice != null ? {
+      triggerPrice: String(triggerPrice),
+      triggerBy,
+      triggerDirection: resolveTriggerDirection(explicitDirection, triggerPrice, marketPrice),
+    } : {};
     return {
       dryRun: true, category, symbol, side, orderType,
       computedQty: qty, executionPrice: String(execPrice),
@@ -121,6 +163,7 @@ export async function handlePlacePerp(
       serverTimestamp: new Date().toISOString(),
       qtyRoundedDown: qtyNum < rawQty,
       qtyStep: inst.qtyStep,
+      ...triggerFields,
     };
   }
 
@@ -149,6 +192,11 @@ export async function handlePlacePerp(
   };
   if (orderType === "Limit") orderBody.price = String(limitPrice);
   if (tp != null) orderBody.takeProfit = String(tp);
+  if (triggerPrice != null) {
+    orderBody.triggerPrice = String(triggerPrice);
+    orderBody.triggerBy = triggerBy;
+    orderBody.triggerDirection = resolveTriggerDirection(explicitDirection, triggerPrice, marketPrice);
+  }
 
   let orderRes: OrderCreateResult;
   try {
