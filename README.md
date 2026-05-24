@@ -5,7 +5,7 @@
 [![npm version](https://img.shields.io/npm/v/ajs-bybit-mcp.svg?color=blue)](https://www.npmjs.com/package/ajs-bybit-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/ajs-bybit-mcp.svg)](https://www.npmjs.com/package/ajs-bybit-mcp)
 [![smithery badge](https://smithery.ai/badge/ajs-bybit-mcp)](https://smithery.ai/server/ajs-bybit-mcp)
-[![tests](https://img.shields.io/badge/tests-234%20passing-brightgreen)](./src)
+[![tests](https://img.shields.io/badge/tests-325%20passing-brightgreen)](./src)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -29,7 +29,7 @@ There are several Bybit MCPs. Most are thin V5 REST wrappers with one tool per e
 | **Execution safety** | Schema-validated `confirm: "CONFIRM"` required on every execution tool + `dry_run` preview on every order | None beyond testnet default |
 | **Options safety** | Naked short blocked by default, partial-short detection, premium % of balance guard | N/A |
 | **Token efficiency** | Compact responses by default: orderbook summary (5 fields) instead of 20-level arrays, rounded numerics, optional chain compact mode | Full arrays, raw floats |
-| **Test coverage** | 287 tests across 24 suites | Usually unstated |
+| **Test coverage** | 325 tests across 25 suites | Usually unstated |
 | **Scope** | Trading decisions | Bybit V5 CRUD |
 
 If you want "what's the price of BTC" and a place-order endpoint, the other Bybit MCPs will do fine. If you want a toolkit for real trading workflow — regime views, positioning scans, options flow, TradFi, safe execution, post-trade journaling — use this one.
