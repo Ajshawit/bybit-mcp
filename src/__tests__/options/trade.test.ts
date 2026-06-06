@@ -207,6 +207,97 @@ describe("handlePlaceOptionTrade", () => {
     expect((result as PlaceOptionTradeResult).orderId).toBe("opt-order-1");
   });
 
+  // --- Risk-defined vertical carve-out: a different-strike long of the SAME
+  // type+expiry covers a short leg, so a spread can be legged in (long first,
+  // then short) even with OPTIONS_ALLOW_NAKED_SHORT=false, while genuine naked
+  // shorts, cross-type "cover", calendars, and net-short books stay blocked. ---
+
+  it("6b. risk-defined put vertical: long higher-strike put covers the short lower-strike leg (gate=false)", async () => {
+    const PUT_LONG = "BTC-25APR28-62000-P-USDT";
+    const PUT_SHORT = "BTC-25APR28-58000-P-USDT";
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValueOnce(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValueOnce({
+      list: [{ symbol: PUT_LONG, side: "Buy", size: "1", avgPrice: "1000" }],
+    });
+    (client.signedPost as jest.Mock).mockResolvedValueOnce(mockOrderResult);
+
+    const result = await handlePlaceOptionTrade(client, {
+      symbol: PUT_SHORT, side: "Sell", qty: 1, orderType: "Market", confirm: "CONFIRM",
+    });
+
+    expect((result as PlaceOptionTradeResult).orderId).toBe("opt-order-1");
+  });
+
+  it("6c. cross-type long (call) does NOT cover a short put — still blocked", async () => {
+    const PUT_SHORT = "BTC-25APR28-58000-P-USDT";
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValueOnce(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValueOnce({
+      list: [{ symbol: SYMBOL, side: "Buy", size: "5", avgPrice: "1000" }], // SYMBOL is a CALL
+    });
+
+    await expect(
+      handlePlaceOptionTrade(client, {
+        symbol: PUT_SHORT, side: "Sell", qty: 1, orderType: "Market", confirm: "CONFIRM",
+      })
+    ).rejects.toThrow("Naked short options are disabled by default.");
+  });
+
+  it("6d. different-expiry long put (calendar) does NOT cover — still blocked", async () => {
+    const PUT_SHORT = "BTC-25APR28-58000-P-USDT";
+    const PUT_LONG_OTHER_EXPIRY = "BTC-25JUN28-62000-P-USDT";
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValueOnce(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValueOnce({
+      list: [{ symbol: PUT_LONG_OTHER_EXPIRY, side: "Buy", size: "5", avgPrice: "1000" }],
+    });
+
+    await expect(
+      handlePlaceOptionTrade(client, {
+        symbol: PUT_SHORT, side: "Sell", qty: 1, orderType: "Market", confirm: "CONFIRM",
+      })
+    ).rejects.toThrow("Naked short options are disabled by default.");
+  });
+
+  it("6e. net-short book: a long already consumed by an existing short does not re-cover a new short", async () => {
+    const PUT_SHORT_NEW = "BTC-25APR28-58000-P-USDT";
+    const PUT_LONG = "BTC-25APR28-62000-P-USDT";
+    const PUT_SHORT_EXISTING = "BTC-25APR28-55000-P-USDT";
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValueOnce(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValueOnce({
+      list: [
+        { symbol: PUT_LONG, side: "Buy", size: "1", avgPrice: "1000" },
+        { symbol: PUT_SHORT_EXISTING, side: "Sell", size: "1", avgPrice: "1000" },
+      ],
+    });
+
+    await expect(
+      handlePlaceOptionTrade(client, {
+        symbol: PUT_SHORT_NEW, side: "Sell", qty: 1, orderType: "Market", confirm: "CONFIRM",
+      })
+    ).rejects.toThrow("Naked short options are disabled by default.");
+  });
+
+  it("6f. dry_run covered vertical short leg produces no uncovered-short warning", async () => {
+    const PUT_LONG = "BTC-25APR28-62000-P-USDT";
+    const PUT_SHORT = "BTC-25APR28-58000-P-USDT";
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValueOnce(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValueOnce({
+      list: [{ symbol: PUT_LONG, side: "Buy", size: "1", avgPrice: "1000" }],
+    });
+
+    const result = await handlePlaceOptionTrade(client, {
+      symbol: PUT_SHORT, side: "Sell", qty: 1, orderType: "Market", dry_run: true,
+    });
+
+    const warnings = (result as OptionDryRunResult).warnings;
+    expect(warnings.some((w) => w.includes("Uncovered short"))).toBe(false);
+    expect((result as OptionDryRunResult).wouldSubmit).toBe(true);
+  });
+
   it("7. insufficient USDC throws correct message", async () => {
     const client = new MockClient("k", "s", "u");
     (client.publicGet as jest.Mock).mockResolvedValueOnce(mockTicker);

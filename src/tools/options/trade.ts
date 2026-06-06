@@ -132,18 +132,42 @@ export async function handlePlaceOptionTrade(
   // Uncovered-short check. The position lookup runs for every Sell — even when
   // OPTIONS_ALLOW_NAKED_SHORT=true — so a dry-run can still surface the naked
   // portion as a warning. The flag only governs whether an uncovered short is
-  // blocked, not whether it is detected. "Covered" means an already-open long
-  // position in the SAME symbol; a different-strike long (e.g. a vertical
-  // spread leg) does not count.
+  // blocked, not whether it is detected.
+  //
+  // Coverage model (risk-defined verticals): a short option leg is covered by
+  // open LONG positions of the SAME underlying, SAME expiry, and SAME option
+  // type (call/put), regardless of strike. Every put-put or call-call vertical
+  // sharing an expiry has a bounded max loss (debit or credit spread), so any
+  // long of matching type+expiry caps the short's tail. Net available cover =
+  // (sum long qty) − (sum existing short qty) across those legs, so a single
+  // long can never be double-counted against two shorts (a net-short book stays
+  // blocked). Different expiry (calendars) and cross-type longs do NOT count and
+  // leave the short treated as naked. This lets the legs of a risk-defined
+  // spread be placed one at a time (long first, then short) while a genuine
+  // naked short stays blocked under OPTIONS_ALLOW_NAKED_SHORT=false.
   let uncoveredShortQty = 0;
   if (side === "Sell") {
     const posRes = await client.signedGet<PositionResult>("/v5/position/list", {
       category: "option",
-      symbol,
+      baseCoin: parsed.underlying,
     });
-    const existingPos = posRes.list.find((p) => p.side === "Buy" && parseFloat(p.size) > 0);
-    const existingLongQty = existingPos ? parseFloat(existingPos.size) : 0;
-    uncoveredShortQty = Math.max(0, qty - existingLongQty);
+    let longCover = 0;
+    let existingShort = 0;
+    for (const p of posRes.list) {
+      const size = parseFloat(p.size);
+      if (!(size > 0) || (p.side !== "Buy" && p.side !== "Sell")) continue;
+      let pp: ReturnType<typeof parseOptionSymbol>;
+      try {
+        pp = parseOptionSymbol(p.symbol);
+      } catch {
+        continue;
+      }
+      if (pp.type !== parsed.type || pp.expiry.getTime() !== parsed.expiry.getTime()) continue;
+      if (p.side === "Buy") longCover += size;
+      else existingShort += size;
+    }
+    const netLongCover = Math.max(0, longCover - existingShort);
+    uncoveredShortQty = Math.max(0, qty - netLongCover);
     if (uncoveredShortQty > 0 && process.env.OPTIONS_ALLOW_NAKED_SHORT !== "true") {
       throw new Error(
         "Naked short options are disabled by default. Set OPTIONS_ALLOW_NAKED_SHORT=true to enable. Naked short options carry unlimited or very large maximum loss."
