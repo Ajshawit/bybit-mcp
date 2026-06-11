@@ -176,11 +176,19 @@ export async function handlePlacePerp(
     throw new Error(`Notional too low: ${notional.toFixed(2)} USD, minimum is ${inst.minNotionalValue} USD`);
   }
 
-  await client.signedPost("/v5/position/set-leverage", {
-    category, symbol,
-    buyLeverage: String(leverage),
-    sellLeverage: String(leverage),
-  });
+  try {
+    await client.signedPost("/v5/position/set-leverage", {
+      category, symbol,
+      buyLeverage: String(leverage),
+      sellLeverage: String(leverage),
+    });
+  } catch (err: unknown) {
+    // 110043: leverage not modified (already at requested value).
+    // 110077: portfolio-margin accounts reject per-symbol leverage entirely —
+    // the PM risk engine sets margin account-wide, so `leverage` only sizes qty.
+    const tolerable = err instanceof BybitError && (err.retCode === 110043 || err.retCode === 110077);
+    if (!tolerable) throw err;
+  }
 
   let positionIdx = await detectPositionIdx(client, category, symbol, side);
   const nonce = crypto.randomBytes(3).toString("hex");
