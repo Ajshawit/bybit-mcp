@@ -4,6 +4,22 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] — 2026-06-14
+
+Token-overhead reduction with compact defaults on responses and reads. 585 tests across 35 suites.
+
+### Changed
+
+- **Compact JSON serialization** — tool responses are now serialized without pretty-print indentation.
+- **`get_ohlc` returns a summary by default** — `lastPrice`, `count`, `periodHigh`, `periodLow`. Pass `includeCandles=true` for the series; `candleFormat=tuples` (default) emits compact `[t,o,h,l,c,v]` arrays, `objects` emits named fields. Empty data returns `count:0` with `candles` omitted (previously an empty array).
+- **`get_market_data` skips klines by default** — pass `includeKlines=true` to fetch/return kline arrays; use `get_ohlc` for candle history. Ticker/funding/OI are unaffected.
+- **`options_market` chain defaults to compact** — minimal per-contract fields by default; pass `compact:false` for the full set (moneyness/mark/lastPrice/volume24h).
+
+### Fixed
+
+- **`get_ohlc` no longer zeroes sub-cent prices/volumes** — OHLC numerics now use significant-figure rounding (precision scales with magnitude) instead of fixed 2-decimal rounding, which collapsed sub-cent symbols (e.g. PEPE/SHIB-class) and their fractional volumes to `0` — corrupting `periodHigh`/`periodLow`/`lastPrice` for stop-placement and swing-level reads. `scan_market` percentage rounding is unchanged.
+- **`options_market` `computeGreeksLocal` schema default corrected** — the description advertised `Default: true` while the runtime default is `false`; the schema now matches the runtime. The flag is also validated with `assertBooleanFlag` at the dispatch boundary like every other boolean.
+
 ## [0.5.0] — 2026-06-12
 
 Quant analytics expansion and roadmap completion: 8 new always-on read-only tools plus a new scan filter (22 → 30 total) and a persistence layer. 579 tests across 35 suites.

@@ -107,6 +107,35 @@ describe("handleGetMarketData", () => {
     expect(result.klines).toEqual({});
   });
 
+  it("reads funding/orderbook/OI from correctly shifted indices when includeKlines=false (linear)", async () => {
+    const client = new MockClient("k", "s", "u");
+    const oiHistory = {
+      list: [
+        { openInterest: "10000", timestamp: "1700000000" },
+        { openInterest: "9500", timestamp: "1699985600" },
+      ],
+    };
+    // Distinct payloads in the includeKlines=false Promise.all order
+    // [ticker, funding, orderbook, OI]. A klineOffset off-by-one (funding/
+    // orderbook/OI swap) would surface here — the uniform-mock test above
+    // cannot catch it because every call returns the same object.
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce(mockTicker)    // [0] tickers
+      .mockResolvedValueOnce(mockFunding)   // [1] funding history
+      .mockResolvedValueOnce(mockOrderbook) // [2] orderbook
+      .mockResolvedValueOnce(oiHistory);    // [3] OI history
+
+    const result = await handleGetMarketData(client, "BTCUSDT");
+
+    expect(result.klines).toEqual({});
+    expect(result.ticker.price).toBe(30000);        // ticker payload  → [0]
+    expect(result.fundingHistory).toHaveLength(2);   // funding payload → [1]
+    expect(result.fundingHistory[0].rate).toBe(0.0001);
+    expect(result.orderbook.bestBid).toBe(29999);    // orderbook payload → [2]
+    expect(result.orderbook.bestAsk).toBe(30001);
+    expect(result.ticker.oi4hAgo).toBe(9500);        // OI payload (oiList[1]) → [3]
+  });
+
   it("xStock path: skips funding/OI and includes nyseStatus when category=spot", async () => {
     const xstockTicker = {
       list: [{
@@ -683,6 +712,29 @@ describe("handleGetOhlc", () => {
     const result = await handleGetOhlc(client, "BTCUSDT");
 
     expect((result as any).timestamp).toBeUndefined();
+  });
+
+  it("preserves sub-cent precision via significant-figure rounding (no zeroing)", async () => {
+    const client = new MockClient("k", "s", "u");
+    // Sub-cent token (e.g. 1000PEPE). Fixed 2dp rounding would zero every one
+    // of these values; significant-figure rounding must keep them.
+    (client.publicGet as jest.Mock).mockResolvedValueOnce({
+      list: [
+        ["1700010000000", "0.00001230", "0.00001880", "0.00001100", "0.00001234", "0.00345", "0"],
+        ["1700006400000", "0.00001200", "0.00001300", "0.00000041", "0.00001210", "0.00210", "0"],
+      ],
+    });
+
+    const result = await handleGetOhlc(client, "1000PEPEUSDT", "linear", "60", 100, true, "tuples");
+
+    expect(result.lastPrice).toBeGreaterThan(0);
+    expect(result.periodLow).toBeGreaterThan(0);
+    expect(result.lastPrice).toBeCloseTo(0.00001234, 10);
+    expect(result.periodHigh).toBeCloseTo(0.0000188, 10);
+    expect(result.periodLow).toBeCloseTo(0.00000041, 10);
+    const newest = result.candles![0] as number[];
+    expect(newest[4]).toBeCloseTo(0.00001234, 10); // close preserved
+    expect(newest[5]).toBeCloseTo(0.00345, 10);     // volume not zeroed
   });
 });
 

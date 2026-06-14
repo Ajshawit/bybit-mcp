@@ -77,7 +77,7 @@ function createServer(
       },
       {
         name: "get_market_data",
-        description: "Get comprehensive market data for a symbol — current price, mark price, ticker, spread, orderbook depth, klines, funding rate, open interest. For linear perpetuals (crypto perps, stock perps e.g. TSLAPUSDT, commodity perps e.g. XAUUSDT): full funding/OI data. For xStock tokens (category=spot, e.g. TSLAXUSDT): price, OHLC, orderbook, and NYSE market hours status — funding/OI fields are omitted. Use list_tradfi_instruments to discover available TradFi symbols.",
+        description: "Get comprehensive market data for a symbol — current price, mark price, ticker, spread, orderbook depth, funding rate, open interest (klines only when includeKlines=true — use get_ohlc for candle history). For linear perpetuals (crypto perps, stock perps e.g. TSLAPUSDT, commodity perps e.g. XAUUSDT): full funding/OI data. For xStock tokens (category=spot, e.g. TSLAXUSDT): price, orderbook, and NYSE market hours status — funding/OI fields are omitted. Use list_tradfi_instruments to discover available TradFi symbols.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -85,7 +85,7 @@ function createServer(
             category: {
               type: "string",
               enum: ["linear", "spot"],
-              description: "linear (default) for crypto perps, stock perps (e.g. TSLAPUSDT), commodity perps (e.g. XAUUSDT). spot for xStock tokens (e.g. TSLAXUSDT) — returns price, OHLC, orderbook and NYSE market hours status instead of funding/OI.",
+              description: "linear (default) for crypto perps, stock perps (e.g. TSLAPUSDT), commodity perps (e.g. XAUUSDT). spot for xStock tokens (e.g. TSLAXUSDT) — returns price, orderbook and NYSE market hours status instead of funding/OI (klines only when includeKlines=true).",
             },
             klineIntervals: { type: "array", items: { type: "string" }, description: "Kline intervals e.g. [\"60\",\"240\"]. Default: [\"60\",\"240\"]" },
             klineLimit: { type: "number", description: "Number of candles per interval. Default: 24" },
@@ -434,7 +434,7 @@ function createServer(
               underlying: { type: "string", enum: ["BTC", "ETH", "SOL"], description: "Required for chain and scan" },
               underlyings: { type: "array", items: { type: "string", enum: ["BTC", "ETH", "SOL"] }, description: "For regime: default all three" },
               symbol: { type: "string", description: "For quote: full Bybit option symbol" },
-              computeGreeksLocal: { type: "boolean", description: "For quote: verify Greeks via Black-Scholes. Default: true" },
+              computeGreeksLocal: { type: "boolean", description: "For quote: verify Greeks via Black-Scholes. Default: false" },
               minDaysToExpiry: { type: "number", description: "For chain. Default: 0" },
               maxDaysToExpiry: { type: "number", description: "For chain. Default: 60" },
               type: { type: "string", enum: ["call", "put"], description: "For chain: omit for both" },
@@ -917,7 +917,7 @@ function createServer(
             const data = await handleGetOptionQuote(
               client,
               a.symbol as string,
-              a.computeGreeksLocal as boolean | undefined
+              assertBooleanFlag(a.computeGreeksLocal, "computeGreeksLocal", "options_market")
             );
             result = { ...data, serverTimestamp: new Date().toISOString() };
           } else if (action === "scan") {

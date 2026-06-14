@@ -121,6 +121,15 @@ export interface OhlcResult {
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
 
+// Significant-figure rounding for OHLC price/volume. Precision scales with
+// magnitude, so high-priced symbols (BTC ~67234.5) and sub-cent tokens
+// (PEPE ~1.2e-5) both keep meaningful digits. Fixed 2dp rounding (r2) zeroes
+// out sub-cent prices/volumes — corrupting periodLow/lastPrice and any
+// stop-placement or swing-level read on low-priced symbols. Trailing float
+// noise is still trimmed, preserving most of the token saving.
+const sigFig = (v: number, sig = 8) =>
+  v === 0 || !Number.isFinite(v) ? v : Number(v.toPrecision(sig));
+
 export async function handleGetMarketData(
   client: BybitClient,
   symbol: string,
@@ -329,9 +338,9 @@ export async function handleGetOhlc(
   );
 
   const count = candles.length;
-  const lastPrice = count > 0 ? r2(candles[0].close) : 0;
-  const periodHigh = count > 0 ? r2(Math.max(...candles.map((c) => c.high))) : 0;
-  const periodLow = count > 0 ? r2(Math.min(...candles.map((c) => c.low))) : 0;
+  const lastPrice = count > 0 ? sigFig(candles[0].close) : 0;
+  const periodHigh = count > 0 ? sigFig(Math.max(...candles.map((c) => c.high))) : 0;
+  const periodLow = count > 0 ? sigFig(Math.min(...candles.map((c) => c.low))) : 0;
 
   const result: OhlcResult = { symbol, category, interval, lastPrice, count, periodHigh, periodLow };
 
@@ -339,13 +348,13 @@ export async function handleGetOhlc(
     result.candles = candleFormat === "objects"
       ? candles.map((c) => ({
           time: c.time,
-          open: r2(c.open),
-          high: r2(c.high),
-          low: r2(c.low),
-          close: r2(c.close),
-          volume: r2(c.volume),
+          open: sigFig(c.open),
+          high: sigFig(c.high),
+          low: sigFig(c.low),
+          close: sigFig(c.close),
+          volume: sigFig(c.volume),
         }))
-      : candles.map((c) => [c.time, r2(c.open), r2(c.high), r2(c.low), r2(c.close), r2(c.volume)] as OhlcCandleTuple) as OhlcCandleTuple[];
+      : candles.map((c) => [c.time, sigFig(c.open), sigFig(c.high), sigFig(c.low), sigFig(c.close), sigFig(c.volume)] as OhlcCandleTuple) as OhlcCandleTuple[];
   }
 
   return result;

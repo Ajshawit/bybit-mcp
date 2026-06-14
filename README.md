@@ -5,7 +5,7 @@
 [![npm version](https://img.shields.io/npm/v/ajs-bybit-mcp.svg?color=blue)](https://www.npmjs.com/package/ajs-bybit-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/ajs-bybit-mcp.svg)](https://www.npmjs.com/package/ajs-bybit-mcp)
 [![smithery badge](https://smithery.ai/badge/ajs-bybit-mcp)](https://smithery.ai/server/ajs-bybit-mcp)
-[![tests](https://img.shields.io/badge/tests-579%20passing-brightgreen)](./src)
+[![tests](https://img.shields.io/badge/tests-585%20passing-brightgreen)](./src)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -25,12 +25,12 @@ There are several Bybit MCPs. Most are thin V5 REST wrappers with one tool per e
 | **Market analytics** | Regime detection (risk_on / risk_off / choppy), OI divergence scan, crowded positioning scan, volume spike scan | Individual endpoint queries |
 | **Quant analytics** | Portfolio Greeks aggregation + spot×IV scenario stress grid, realized-vol estimators + vol cone + IV−RV spread, basis & funding-carry analytics with predicted funding, pre-trade slippage/fee estimates from 500-level books, event calendar (funding/expiries/deliveries) | Not supported |
 | **Account view** | Single `get_account_status` call: balance, margin in use, unrealised PnL, and all positions across perps, spot, options | Multiple calls for wallet, positions, orders |
-| **Consolidated market data** | `get_market_data` returns price, funding, OI, klines, and top-20 orderbook in one call | One endpoint per data type |
+| **Consolidated market data** | `get_market_data` returns price, funding, OI, and top-20 orderbook in one call (klines opt-in via `includeKlines`) | One endpoint per data type |
 | **Post-trade review** | `get_closed_trades` returns realised PnL, fees-net PnL, hold duration, leverage used | None |
 | **Execution safety** | Schema-validated `confirm: "CONFIRM"` required on every execution tool + `dry_run` preview on every order | None beyond testnet default |
 | **Options safety** | Naked short blocked by default, partial-short detection, premium % of balance guard | N/A |
-| **Token efficiency** | Compact responses by default: orderbook summary (5 fields) instead of 20-level arrays, rounded numerics, optional chain compact mode | Full arrays, raw floats |
-| **Test coverage** | 579 tests across 35 suites | Usually unstated |
+| **Token efficiency** | Compact responses by default: orderbook 5-field summary instead of 20-level arrays, summary-only OHLC (candles opt-in), compact option chains, significant-figure numerics, klines off unless requested | Full arrays, raw floats |
+| **Test coverage** | 585 tests across 35 suites | Usually unstated |
 | **Scope** | Trading decisions | Bybit V5 CRUD |
 
 If you want "what's the price of BTC" and a place-order endpoint, the other Bybit MCPs will do fine. If you want a toolkit for real trading workflow — regime views, positioning scans, options flow, TradFi, safe execution, post-trade journaling — use this one.
@@ -54,8 +54,8 @@ Bybit V5 API for AI agents, with confirmation-based safety rails. Exposes Bybit'
 | Tool | Description |
 |------|-------------|
 | `get_account_status` | Balance, free capital, margin in use, unrealised PnL, and all open positions in one call. Returns `positions` (linear USDT perps), `inverse_positions` (coin-margined perps), `spot_holdings` (non-USDT spot incl. xStock tokens), and — when options are enabled — `option_positions` (with Greeks, premiumFlow, daysToExpiry, breakeven). Includes `accountInfo` (UID + account type) so you can confirm which sub-account the key targets. |
-| `get_market_data` | One call for price, mark price, spread, orderbook, klines, funding rate + history, and open interest. `category=linear` (default) for crypto/stock/commodity perps; `category=spot` for xStock tokens — which return price, OHLC, orderbook and **NYSE market-hours status** instead of funding/OI. Orderbook is a 5-field summary by default; `includeOrderbook=true` returns full 20-level depth. |
-| `get_ohlc` | Raw OHLC candles for any symbol and category (`linear` / `inverse` / `spot`), newest-first. Intervals 1m → 1M, up to 1000 candles. For swing levels, stop placement, and blue-chip context. Returns an empty array (not an error) when Bybit has no data for the range. |
+| `get_market_data` | One call for price, mark price, spread, orderbook, funding rate + history, and open interest. `category=linear` (default) for crypto/stock/commodity perps; `category=spot` for xStock tokens — which return price, orderbook and **NYSE market-hours status** instead of funding/OI. Orderbook is a 5-field summary by default; `includeOrderbook=true` returns full 20-level depth. Klines are returned only when `includeKlines=true` (default false) — use `get_ohlc` for candle history. |
+| `get_ohlc` | OHLC for any symbol and category (`linear` / `inverse` / `spot`). Returns a summary by default (`lastPrice`, `count`, `periodHigh`, `periodLow`); set `includeCandles=true` for the series — `candleFormat=tuples` (default) gives compact `[t,o,h,l,c,v]` arrays, `objects` gives named fields. Newest-first, intervals 1m → 1M, up to 1000 candles. For swing levels, stop placement, and blue-chip context. Returns `count:0` with candles omitted (not an error) when Bybit has no data for the range. |
 
 ### Market Analytics
 
@@ -105,7 +105,7 @@ Bybit V5 API for AI agents, with confirmation-based safety rails. Exposes Bybit'
 
 | Tool | Description |
 |------|-------------|
-| `options_market` | Consolidated options data for BTC/ETH/SOL. Select mode via `action`: **`chain`** (browse contracts, filterable by expiry/type/OI/strike range, `compact` mode), **`quote`** (full pricing + Greeks for one symbol, optional local Black-Scholes verification), **`scan`** (IV anomalies — `high_iv`/`low_iv` need ~24h warmup — plus `skew`, `high_oi_change`), **`regime`** (ATM IV, IV percentile, put/call skew, term structure per underlying). |
+| `options_market` | Consolidated options data for BTC/ETH/SOL. Select mode via `action`: **`chain`** (browse contracts, filterable by expiry/type/OI/strike range; returns minimal fields by default — pass `compact:false` for the full set incl. moneyness/mark/lastPrice/volume24h), **`quote`** (full pricing + Greeks for one symbol, opt-in local Black-Scholes verification via `computeGreeksLocal:true`), **`scan`** (IV anomalies — `high_iv`/`low_iv` need ~24h warmup — plus `skew`, `high_oi_change`), **`regime`** (ATM IV, IV percentile, put/call skew, term structure per underlying). |
 | `get_option_payoff` | Compute expiry payoff for one or more legs — PnL at each price point, max loss, max profit, breakeven(s). Pure math, no API call. Use before placing to verify risk/reward. |
 | `place_option_trade` | Place a single-leg option order (BTC/ETH/SOL) with `dry_run` support and naked-short guards. |
 | `close_option_position` | Close an open option position fully or partially, with `dry_run` P&L preview. |
@@ -266,7 +266,7 @@ npm run dev         # auto-rebuild on file changes (TypeScript watch)
 npm run build       # compile to dist/
 ```
 
-Tests: 579 passing across 35 suites.
+Tests: 585 passing across 35 suites.
 
 ---
 

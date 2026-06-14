@@ -8,7 +8,7 @@ User-facing docs live in README.md — keep this file for working-on-the-code co
 ```bash
 npm run build      # tsc + chmod +x dist/index.js (required: bin must be executable)
 npm run dev        # tsc --watch
-npm test           # jest (579 cases, 35 suites) — must stay green before publish
+npm test           # jest (585 cases, 35 suites) — must stay green before publish
 npm test -- trade  # run a single suite by path fragment
 npm start          # node dist/index.js (needs prior build)
 ```
