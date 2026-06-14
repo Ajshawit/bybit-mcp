@@ -20,7 +20,7 @@ There are several Bybit MCPs. Most are thin V5 REST wrappers with one tool per e
 | | `ajs-bybit-mcp` (this repo) | Typical Bybit MCP |
 |---|---|---|
 | **Options trading** | Full stack: chains, Greeks, IV scanning, skew and term structure, payoff math, safe place/close | Not supported |
-| **Multi-leg / block trades** | RFQ taker flow: eligibility pre-flight, combo-risk gate, dry-run default, kill-switched live submit | Not supported |
+| **Multi-leg / block trades** 🚧 | RFQ taker flow: eligibility pre-flight, combo-risk gate, dry-run default — **live submit coming soon** (kill-switched until endpoint paths are live-verified) | Not supported |
 | **TradFi** | xStocks (tokenized equities), stock perps, commodity perps, with NYSE-hours awareness | Not supported |
 | **Market analytics** | Regime detection (risk_on / risk_off / choppy), OI divergence scan, crowded positioning scan, volume spike scan | Individual endpoint queries |
 | **Quant analytics** | Portfolio Greeks aggregation + spot×IV scenario stress grid, realized-vol estimators + vol cone + IV−RV spread, basis & funding-carry analytics with predicted funding, pre-trade slippage/fee estimates from 500-level books, event calendar (funding/expiries/deliveries) | Not supported |
@@ -113,6 +113,8 @@ Bybit V5 API for AI agents, with confirmation-based safety rails. Exposes Bybit'
 All option symbols this server trades are **USDT-settled** (`-USDT` suffix) — premium is charged in USDT. Ensure USDT balance before placing option trades.
 
 ### RFQ / Block Trades (requires `ENABLE_RFQ=true`)
+
+> 🚧 **Coming soon** — live RFQ block-trade submission is not yet enabled. The tools ship today as **read-only queries and dry-run previews**; live submit stays kill-switched (`RFQ_ENABLE_WRITES=false`) until the endpoint paths are verified against a live RFQ-eligible account.
 
 Multi-leg / block-trade support, taker side, for negotiated combos (options + linear + spot, up to 25 legs). **Read-only and dry-run by default** — see the safety note below.
 
