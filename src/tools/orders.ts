@@ -77,22 +77,78 @@ export async function handleListOpenOrders(
 ): Promise<{ orders: OpenOrder[]; count: number; serverTimestamp: string }> {
   const { symbol, category = "linear" } = params;
   const query: Record<string, string> = { category, limit: "50" };
-  if (symbol) query.symbol = symbol;
+  if (symbol) {
+    query.symbol = symbol;
+  } else if (category === "linear") {
+    // Bybit requires symbol/baseCoin/settleCoin for linear realtime queries —
+    // an unfiltered call errors. Default to USDT settle; USDC-linear orders
+    // need an explicit symbol.
+    query.settleCoin = "USDT";
+  }
 
   const res = await client.signedGet<BybitOpenOrdersResult>("/v5/order/realtime", query);
   const orders = res.list.map(mapOrder);
   return { orders, count: orders.length, serverTimestamp: new Date().toISOString() };
 }
 
+export type SpotOrderFilter = "Order" | "StopOrder" | "tpslOrder";
+
+export interface CancelOrderDryRunResult {
+  dryRun: true;
+  wouldCancel: true;
+  orderId: string;
+  symbol: string;
+  category: OrderCategory;
+  orderFilter?: SpotOrderFilter;
+  serverTimestamp: string;
+}
+
 export async function handleCancelOrder(
   client: BybitClient,
-  params: { symbol: string; orderId: string; category?: OrderCategory; confirm?: string }
-): Promise<{ cancelled: boolean; orderId: string; orderLinkId: string; symbol: string; serverTimestamp: string }> {
-  const { symbol, orderId, category = "linear", confirm } = params;
-  assertConfirm(confirm, false, "cancel_order");
-  const res = await client.signedPost<BybitCancelledItem>("/v5/order/cancel", {
-    category, symbol, orderId,
-  });
+  params: {
+    symbol: string;
+    orderId: string;
+    category?: OrderCategory;
+    orderFilter?: SpotOrderFilter;
+    dry_run?: boolean;
+    confirm?: string;
+  }
+): Promise<{ cancelled: boolean; orderId: string; orderLinkId: string; symbol: string; serverTimestamp: string } | CancelOrderDryRunResult> {
+  const { symbol, orderId, category = "linear", orderFilter, dry_run = false, confirm } = params;
+  assertConfirm(confirm, dry_run, "cancel_order");
+
+  if (dry_run) {
+    return {
+      dryRun: true,
+      wouldCancel: true,
+      orderId, symbol, category,
+      ...(orderFilter ? { orderFilter } : {}),
+      serverTimestamp: new Date().toISOString(),
+    };
+  }
+
+  const body: Record<string, unknown> = { category, symbol, orderId };
+  if (orderFilter) body.orderFilter = orderFilter;
+
+  let res: BybitCancelledItem;
+  try {
+    res = await client.signedPost<BybitCancelledItem>("/v5/order/cancel", body);
+  } catch (err: unknown) {
+    // Spot conditional orders are created with orderFilter=StopOrder and live
+    // in a separate order book — a plain cancel can't see them and fails,
+    // leaving the trigger armed. Retry once with StopOrder before giving up;
+    // cancelling is risk-reducing, so the retry is safe.
+    if (category !== "spot" || orderFilter != null) throw err;
+    try {
+      res = await client.signedPost<BybitCancelledItem>("/v5/order/cancel", {
+        ...body,
+        orderFilter: "StopOrder",
+      });
+    } catch {
+      throw err;
+    }
+  }
+
   return {
     cancelled: true,
     orderId: res.orderId,
@@ -104,7 +160,7 @@ export async function handleCancelOrder(
 
 export type ClosedPnlCategory = "linear" | "inverse";
 
-interface BybitClosedPnl {
+export interface BybitClosedPnl {
   symbol: string;
   side: "Buy" | "Sell";
   closedPnl: string;
@@ -121,7 +177,7 @@ interface BybitClosedPnl {
   execType: string;
 }
 
-interface BybitClosedPnlResult {
+export interface BybitClosedPnlResult {
   list: BybitClosedPnl[];
   category: string;
   nextPageCursor?: string;
@@ -147,7 +203,7 @@ export interface ClosedTrade {
   execType: string;
 }
 
-function mapClosedPnl(p: BybitClosedPnl): ClosedTrade {
+export function mapClosedPnl(p: BybitClosedPnl): ClosedTrade {
   const positionSide: "LONG" | "SHORT" = p.side === "Sell" ? "LONG" : "SHORT";
   const closedPnl = parseFloat(p.closedPnl);
   const cumEntryValue = parseFloat(p.cumEntryValue);

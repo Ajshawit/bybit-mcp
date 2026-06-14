@@ -1,8 +1,31 @@
-import { handleGetClosedTrades, handleCancelOrder } from "../tools/orders";
+import { handleGetClosedTrades, handleCancelOrder, handleListOpenOrders } from "../tools/orders";
 import { BybitClient } from "../client";
 
 jest.mock("../client");
 const MockClient = BybitClient as jest.MockedClass<typeof BybitClient>;
+
+describe("handleListOpenOrders", () => {
+  it("defaults settleCoin=USDT for an unfiltered linear query (Bybit requires a filter)", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.signedGet as jest.Mock).mockResolvedValue({ list: [], category: "linear" });
+
+    await handleListOpenOrders(client, {});
+
+    const call = (client.signedGet as jest.Mock).mock.calls[0];
+    expect(call[1].settleCoin).toBe("USDT");
+  });
+
+  it("does not add settleCoin when a symbol filter is provided", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.signedGet as jest.Mock).mockResolvedValue({ list: [], category: "linear" });
+
+    await handleListOpenOrders(client, { symbol: "BTCUSDT" });
+
+    const call = (client.signedGet as jest.Mock).mock.calls[0];
+    expect(call[1].settleCoin).toBeUndefined();
+    expect(call[1].symbol).toBe("BTCUSDT");
+  });
+});
 
 describe("handleCancelOrder", () => {
   it("throws when confirm is missing — gate fires before any signed POST", async () => {
@@ -36,6 +59,61 @@ describe("handleCancelOrder", () => {
     expect(res).toMatchObject({
       cancelled: true, orderId: "abc123", orderLinkId: "mcp-x", symbol: "BTCUSDT",
     });
+  });
+
+  it("dry_run returns a preview without confirm and without submitting", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.signedPost as jest.Mock).mockResolvedValue({ orderId: "abc123", orderLinkId: "mcp-x" });
+
+    const res = await handleCancelOrder(client, {
+      symbol: "BTCUSDT", orderId: "abc123", dry_run: true,
+    });
+
+    expect((res as { dryRun?: boolean }).dryRun).toBe(true);
+    expect(client.signedPost).not.toHaveBeenCalled();
+  });
+
+  it("passes an explicit orderFilter through to Bybit", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.signedPost as jest.Mock).mockResolvedValue({ orderId: "abc123", orderLinkId: "mcp-x" });
+
+    await handleCancelOrder(client, {
+      symbol: "BTCUSDT", orderId: "abc123", category: "spot", orderFilter: "StopOrder", confirm: "CONFIRM",
+    });
+
+    expect(client.signedPost).toHaveBeenCalledWith(
+      "/v5/order/cancel",
+      expect.objectContaining({ category: "spot", orderFilter: "StopOrder" }),
+    );
+  });
+
+  // Spot conditional orders are created with orderFilter=StopOrder; a cancel
+  // without that filter looks in the wrong order book and fails, leaving the
+  // trigger armed. The handler must retry spot cancels with StopOrder.
+  it("retries a failed spot cancel with orderFilter=StopOrder", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.signedPost as jest.Mock)
+      .mockRejectedValueOnce(new Error("Bybit error 170213: Order does not exist."))
+      .mockResolvedValueOnce({ orderId: "stop-1", orderLinkId: "mcp-y" });
+
+    const res = await handleCancelOrder(client, {
+      symbol: "BTCUSDT", orderId: "stop-1", category: "spot", confirm: "CONFIRM",
+    });
+
+    expect(client.signedPost).toHaveBeenCalledTimes(2);
+    const retryCall = (client.signedPost as jest.Mock).mock.calls[1];
+    expect(retryCall[1].orderFilter).toBe("StopOrder");
+    expect(res).toMatchObject({ cancelled: true, orderId: "stop-1" });
+  });
+
+  it("does not retry non-spot cancels and surfaces the original error", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.signedPost as jest.Mock).mockRejectedValue(new Error("Bybit error 110001: order not exists"));
+
+    await expect(
+      handleCancelOrder(client, { symbol: "BTCUSDT", orderId: "x", category: "linear", confirm: "CONFIRM" })
+    ).rejects.toThrow("110001");
+    expect(client.signedPost).toHaveBeenCalledTimes(1);
   });
 });
 

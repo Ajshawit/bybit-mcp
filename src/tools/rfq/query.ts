@@ -17,7 +17,9 @@ import {
 // there is NO `/trade/` segment.
 const PATHS = {
   rfqList: "/v5/rfq/rfq-list",
-  rfqRealtime: "/v5/rfq/realtime",
+  // NOTE: rfq-realtime, not realtime — re-verified against the reference
+  // client source (tiagosiebler/bybit-api rest-client-v5.ts) 2026-06-12.
+  rfqRealtime: "/v5/rfq/rfq-realtime",
   quoteList: "/v5/rfq/quote-list",
   quoteRealtime: "/v5/rfq/quote-realtime",
   tradeList: "/v5/rfq/trade-list",

@@ -24,18 +24,18 @@ export function parseOptionSymbol(symbol: string): ParsedOptionSymbol {
   }
 
   const [underlying, expiryStr, strikeStr, typeChar] = parts;
-  const day = parseInt(expiryStr.slice(0, 2));
-  const monthStr = expiryStr.slice(2, 5).toUpperCase();
-  const yearStr = expiryStr.slice(5);
-  const year = 2000 + parseInt(yearStr);
-
-  if (isNaN(day) || !(monthStr in MONTHS) || !/^\d{2}$/.test(yearStr)) {
+  // Bybit does not zero-pad days for the 1st–9th (e.g. ETH-3JAN23-1250-P),
+  // so the day segment is 1 or 2 digits.
+  const expiryMatch = /^(\d{1,2})([A-Z]{3})(\d{2})$/.exec(expiryStr.toUpperCase());
+  if (!expiryMatch || !(expiryMatch[2] in MONTHS)) {
     throw new Error(`Invalid option symbol format. Expected ASSET-EXPIRY-STRIKE-C|P-USDT, got: ${symbol}`);
   }
+  const day = parseInt(expiryMatch[1], 10);
+  const year = 2000 + parseInt(expiryMatch[3], 10);
 
   return {
     underlying,
-    expiry: new Date(Date.UTC(year, MONTHS[monthStr], day, 8, 0, 0)),
+    expiry: new Date(Date.UTC(year, MONTHS[expiryMatch[2]], day, 8, 0, 0)),
     strike: parseFloat(strikeStr),
     type: typeChar === "C" ? "call" : "put",
   };
@@ -130,8 +130,13 @@ export interface OptionPayoffPoint {
 }
 
 export interface OptionPayoffSummary {
-  maxLoss: number;
+  // "unlimited" maxLoss = net short calls (loss unbounded as S→∞). A numeric
+  // maxLoss is EXACT: evaluated analytically at S=0 and every strike.
+  maxLoss: number | "unlimited";
   maxProfit: number | "unlimited";
   breakevens: number[];
-  cappedAtRange?: boolean;
+  // Net short tail beyond the outermost strike: loss unbounded above
+  // (net short calls) / growing all the way to S=0 (net short puts).
+  uncoveredTailAbove?: boolean;
+  uncoveredTailBelow?: boolean;
 }

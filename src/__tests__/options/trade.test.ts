@@ -173,9 +173,11 @@ describe("handlePlaceOptionTrade", () => {
   it("5d. dry_run fully-covered short produces no uncovered-short warning", async () => {
     const client = new MockClient("k", "s", "u");
     (client.publicGet as jest.Mock).mockResolvedValueOnce(mockTicker);
-    (client.signedGet as jest.Mock).mockResolvedValueOnce({
-      list: [{ symbol: SYMBOL, side: "Buy", size: "2", avgPrice: "1000" }], // 2 longs cover 2 sold
-    });
+    (client.signedGet as jest.Mock)
+      .mockResolvedValueOnce({
+        list: [{ symbol: SYMBOL, side: "Buy", size: "2", avgPrice: "1000" }], // 2 longs cover 2 sold
+      })
+      .mockResolvedValueOnce({ list: [] }); // no resting orders claim the cover
 
     const result = await handlePlaceOptionTrade(client, {
       symbol: SYMBOL,
@@ -192,9 +194,11 @@ describe("handlePlaceOptionTrade", () => {
   it("6. naked short succeeds when existing long qty covers sell qty", async () => {
     const client = new MockClient("k", "s", "u");
     (client.publicGet as jest.Mock).mockResolvedValueOnce(mockTicker);
-    (client.signedGet as jest.Mock).mockResolvedValueOnce({
-      list: [{ symbol: SYMBOL, side: "Buy", size: "2", avgPrice: "1000" }], // 2 longs
-    });
+    (client.signedGet as jest.Mock)
+      .mockResolvedValueOnce({
+        list: [{ symbol: SYMBOL, side: "Buy", size: "2", avgPrice: "1000" }], // 2 longs
+      })
+      .mockResolvedValueOnce({ list: [] }); // no resting orders claim the cover
     (client.signedPost as jest.Mock).mockResolvedValueOnce(mockOrderResult);
 
     const result = await handlePlaceOptionTrade(client, {
@@ -217,9 +221,11 @@ describe("handlePlaceOptionTrade", () => {
     const PUT_SHORT = "BTC-25APR28-58000-P-USDT";
     const client = new MockClient("k", "s", "u");
     (client.publicGet as jest.Mock).mockResolvedValueOnce(mockTicker);
-    (client.signedGet as jest.Mock).mockResolvedValueOnce({
-      list: [{ symbol: PUT_LONG, side: "Buy", size: "1", avgPrice: "1000" }],
-    });
+    (client.signedGet as jest.Mock)
+      .mockResolvedValueOnce({
+        list: [{ symbol: PUT_LONG, side: "Buy", size: "1", avgPrice: "1000" }],
+      })
+      .mockResolvedValueOnce({ list: [] }); // no resting orders claim the cover
     (client.signedPost as jest.Mock).mockResolvedValueOnce(mockOrderResult);
 
     const result = await handlePlaceOptionTrade(client, {
@@ -285,9 +291,11 @@ describe("handlePlaceOptionTrade", () => {
     const PUT_SHORT = "BTC-25APR28-58000-P-USDT";
     const client = new MockClient("k", "s", "u");
     (client.publicGet as jest.Mock).mockResolvedValueOnce(mockTicker);
-    (client.signedGet as jest.Mock).mockResolvedValueOnce({
-      list: [{ symbol: PUT_LONG, side: "Buy", size: "1", avgPrice: "1000" }],
-    });
+    (client.signedGet as jest.Mock)
+      .mockResolvedValueOnce({
+        list: [{ symbol: PUT_LONG, side: "Buy", size: "1", avgPrice: "1000" }],
+      })
+      .mockResolvedValueOnce({ list: [] }); // no resting orders claim the cover
 
     const result = await handlePlaceOptionTrade(client, {
       symbol: PUT_SHORT, side: "Sell", qty: 1, orderType: "Market", dry_run: true,
@@ -298,37 +306,84 @@ describe("handlePlaceOptionTrade", () => {
     expect((result as OptionDryRunResult).wouldSubmit).toBe(true);
   });
 
-  it("7. insufficient USDC throws correct message", async () => {
+  it("7. insufficient USDT throws correct message (USDT-settled options)", async () => {
     const client = new MockClient("k", "s", "u");
     (client.publicGet as jest.Mock).mockResolvedValueOnce(mockTicker);
     (client.signedGet as jest.Mock).mockResolvedValueOnce({
-      list: [{ coin: [{ coin: "USDC", walletBalance: "100" }] }], // only 100 USDC
+      list: [{ coin: [{ coin: "USDT", walletBalance: "100" }] }], // only 100 USDT
     });
 
     await expect(
       handlePlaceOptionTrade(client, {
         symbol: SYMBOL,
         side: "Buy",
-        qty: 1, // needs 1200 USDC
+        qty: 1, // needs 1200 USDT
         orderType: "Market", confirm: "CONFIRM"
       })
-    ).rejects.toThrow("Insufficient USDC");
+    ).rejects.toThrow("Insufficient USDT");
   });
 
   it("8. premium cap exceeded throws correct message", async () => {
-    process.env.OPTIONS_MAX_PREMIUM_PCT_BALANCE = "5"; // 5% of 50000 = 2500 cap
+    process.env.OPTIONS_MAX_PREMIUM_PCT_BALANCE = "5"; // 5% of 10000 USDT = 500 cap
     const client = new MockClient("k", "s", "u");
     (client.publicGet as jest.Mock).mockResolvedValueOnce(mockTicker);
-    (client.signedGet as jest.Mock).mockResolvedValueOnce(mockWallet); // 50000 USDC
+    (client.signedGet as jest.Mock).mockResolvedValueOnce(mockWallet); // 10000 USDT
 
     await expect(
       handlePlaceOptionTrade(client, {
         symbol: SYMBOL,
         side: "Buy",
-        qty: 3, // 3 × 1200 = 3600 > 2500 cap
+        qty: 3, // 3 × 1200 = 3600 > 500 cap
         orderType: "Market", confirm: "CONFIRM"
       })
-    ).rejects.toThrow("Premium 3600 USDC exceeds 5%");
+    ).rejects.toThrow("Premium 3600 USDT exceeds 5%");
+  });
+
+  it("8b. malformed OPTIONS_MAX_PREMIUM_PCT_BALANCE fails closed", async () => {
+    process.env.OPTIONS_MAX_PREMIUM_PCT_BALANCE = "abc";
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValueOnce(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValueOnce(mockWallet);
+    (client.signedPost as jest.Mock).mockResolvedValueOnce(mockOrderResult);
+
+    await expect(
+      handlePlaceOptionTrade(client, {
+        symbol: SYMBOL, side: "Buy", qty: 1, orderType: "Market", confirm: "CONFIRM",
+      })
+    ).rejects.toThrow(/OPTIONS_MAX_PREMIUM_PCT_BALANCE/);
+    expect(client.signedPost).not.toHaveBeenCalled();
+  });
+
+  it("8c. Market buy with no ask quote refuses instead of bypassing the premium gate", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValueOnce({
+      list: [{ ...mockTicker.list[0], ask1Price: "0" }],
+    });
+    (client.signedGet as jest.Mock).mockResolvedValueOnce(mockWallet);
+    (client.signedPost as jest.Mock).mockResolvedValueOnce(mockOrderResult);
+
+    await expect(
+      handlePlaceOptionTrade(client, {
+        symbol: SYMBOL, side: "Buy", qty: 1, orderType: "Market", confirm: "CONFIRM",
+      })
+    ).rejects.toThrow(/no ask quote/i);
+    expect(client.signedPost).not.toHaveBeenCalled();
+  });
+
+  it("8d. Limit buy with no ask quote estimates premium from the limit price", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValueOnce({
+      list: [{ ...mockTicker.list[0], ask1Price: "0" }],
+    });
+    (client.signedGet as jest.Mock).mockResolvedValueOnce(mockWallet);
+    (client.signedPost as jest.Mock).mockResolvedValueOnce(mockOrderResult);
+
+    const result = await handlePlaceOptionTrade(client, {
+      symbol: SYMBOL, side: "Buy", qty: 1, orderType: "Limit", price: 800, confirm: "CONFIRM",
+    });
+
+    expect((result as PlaceOptionTradeResult).estimatedPremium).toBe(800);
+    expect((client.signedPost as jest.Mock).mock.calls[0][1].price).toBe("800");
   });
 
   it("9. live place submits POST /v5/order/create with category: 'option'", async () => {
@@ -360,13 +415,13 @@ describe("handlePlaceOptionTrade", () => {
                underlyingPrice: "2400" }],
     });
     (client.signedGet as jest.Mock).mockResolvedValueOnce({
-      list: [{ coin: [{ coin: "USDC", walletBalance: "9.94" }] }], // enough for 0.1 ETH but not 1 ETH
+      list: [{ coin: [{ coin: "USDT", walletBalance: "9.94" }] }], // enough for 0.1 ETH but not 1 ETH
     });
 
-    // With multiplier=1: estimatedPremium = 1 × 45 × 1 = 45 USDC > 9.94 → should throw
+    // With multiplier=1: estimatedPremium = 1 × 45 × 1 = 45 USDT > 9.94 → should throw
     await expect(
       handlePlaceOptionTrade(client, { symbol: ETH_SYMBOL, side: "Buy", qty: 1, orderType: "Market", confirm: "CONFIRM" })
-    ).rejects.toThrow("Insufficient USDC: need 45");
+    ).rejects.toThrow("Insufficient USDT: need 45");
   });
 
   it("10. limit order without price throws", async () => {
@@ -450,7 +505,9 @@ describe("handleCloseOptionPosition", () => {
 
   it("13. dry_run=true returns OptionCloseDryRunResult with correct estimatedPnl for long and serverTimestamp", async () => {
     const client = new MockClient("k", "s", "u");
-    (client.signedGet as jest.Mock).mockResolvedValueOnce(mockLongPosition);
+    (client.signedGet as jest.Mock)
+      .mockResolvedValueOnce(mockLongPosition)
+      .mockResolvedValueOnce(mockLongPosition); // coverage check: no shorts in book
     (client.publicGet as jest.Mock).mockResolvedValueOnce(mockTicker); // bid=1100, ask=1200
 
     const result = await handleCloseOptionPosition(client, {
@@ -485,7 +542,9 @@ describe("handleCloseOptionPosition", () => {
 
   it("15. close qty defaults to full position size when qty not provided", async () => {
     const client = new MockClient("k", "s", "u");
-    (client.signedGet as jest.Mock).mockResolvedValueOnce(mockLongPosition); // size=2
+    (client.signedGet as jest.Mock)
+      .mockResolvedValueOnce(mockLongPosition) // size=2
+      .mockResolvedValueOnce(mockLongPosition); // coverage check: no shorts in book
     (client.publicGet as jest.Mock).mockResolvedValueOnce(mockTicker);
     (client.signedPost as jest.Mock).mockResolvedValueOnce(mockCloseOrderResult);
 
@@ -500,7 +559,9 @@ describe("handleCloseOptionPosition", () => {
 
   it("16. live close submits with reduceOnly: true and opposite side", async () => {
     const client = new MockClient("k", "s", "u");
-    (client.signedGet as jest.Mock).mockResolvedValueOnce(mockLongPosition); // Long → close with Sell
+    (client.signedGet as jest.Mock)
+      .mockResolvedValueOnce(mockLongPosition) // Long → close with Sell
+      .mockResolvedValueOnce(mockLongPosition); // coverage check: no shorts in book
     (client.publicGet as jest.Mock).mockResolvedValueOnce(mockTicker);
     (client.signedPost as jest.Mock).mockResolvedValueOnce(mockCloseOrderResult);
 
@@ -516,7 +577,9 @@ describe("handleCloseOptionPosition", () => {
 
   it("17. remainingQty computed correctly for partial close", async () => {
     const client = new MockClient("k", "s", "u");
-    (client.signedGet as jest.Mock).mockResolvedValueOnce(mockLongPosition); // size=2
+    (client.signedGet as jest.Mock)
+      .mockResolvedValueOnce(mockLongPosition) // size=2
+      .mockResolvedValueOnce(mockLongPosition); // coverage check: no shorts in book
     (client.publicGet as jest.Mock).mockResolvedValueOnce(mockTicker);
     (client.signedPost as jest.Mock).mockResolvedValueOnce(mockCloseOrderResult);
 
@@ -528,5 +591,129 @@ describe("handleCloseOptionPosition", () => {
 
     expect((result as CloseOptionResult).closedQty).toBe(1);
     expect((result as CloseOptionResult).remainingQty).toBe(1);
+  });
+});
+
+// Negative tests for the confirm gate itself — deleting assertConfirm from
+// either options handler must turn these red, and a refused call must never
+// reach the network.
+describe("options confirm gate wiring (negative)", () => {
+  it("handlePlaceOptionTrade without confirm rejects before any request", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValue(mockWallet);
+    (client.signedPost as jest.Mock).mockResolvedValue(mockOrderResult);
+
+    await expect(
+      handlePlaceOptionTrade(client, { symbol: SYMBOL, side: "Buy", qty: 1, orderType: "Market" })
+    ).rejects.toThrow(/place_option_trade requires confirm="CONFIRM"/);
+    expect(client.signedPost).not.toHaveBeenCalled();
+    expect(client.publicGet).not.toHaveBeenCalled();
+  });
+
+  it("handleCloseOptionPosition without confirm rejects before any request", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.signedGet as jest.Mock).mockResolvedValue({
+      list: [{ symbol: SYMBOL, side: "Buy", size: "1", avgPrice: "1000" }],
+    });
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker);
+    (client.signedPost as jest.Mock).mockResolvedValue(mockOrderResult);
+
+    await expect(
+      handleCloseOptionPosition(client, { symbol: SYMBOL, orderType: "Market" })
+    ).rejects.toThrow(/close_option_position requires confirm="CONFIRM"/);
+    expect(client.signedPost).not.toHaveBeenCalled();
+    expect(client.signedGet).not.toHaveBeenCalled();
+  });
+
+  it("handlePlaceOptionTrade rejects lowercase 'confirm'", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.signedPost as jest.Mock).mockResolvedValue(mockOrderResult);
+
+    await expect(
+      handlePlaceOptionTrade(client, { symbol: SYMBOL, side: "Buy", qty: 1, orderType: "Market", confirm: "confirm" })
+    ).rejects.toThrow(/case-sensitive/);
+    expect(client.signedPost).not.toHaveBeenCalled();
+  });
+});
+
+// June 2026 audit: the naked-short gate counted only filled positions, so a
+// resting short order could reuse the same long cover, and closing a covering
+// long could silently convert an existing short into a naked one.
+describe("naked-short gate vs resting orders and covering-leg closes", () => {
+  afterEach(() => {
+    delete process.env.OPTIONS_ALLOW_NAKED_SHORT;
+  });
+
+  it("counts resting short orders against the same cover when placing a new short", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValueOnce(mockTicker);
+    (client.signedGet as jest.Mock)
+      .mockResolvedValueOnce({
+        list: [{ symbol: SYMBOL, side: "Buy", size: "1", avgPrice: "1000" }], // 1 long...
+      })
+      .mockResolvedValueOnce({
+        list: [{ symbol: SYMBOL, side: "Sell", qty: "1", leavesQty: "1" }], // ...already claimed by a resting short
+      });
+
+    await expect(
+      handlePlaceOptionTrade(client, {
+        symbol: SYMBOL, side: "Sell", qty: 1, orderType: "Market", confirm: "CONFIRM",
+      })
+    ).rejects.toThrow("Naked short options are disabled");
+    expect(client.signedPost).not.toHaveBeenCalled();
+  });
+
+  it("close blocks selling a covering long while a short of the same type/expiry depends on it", async () => {
+    const SHORT_DEPENDENT = "BTC-25APR28-90000-C-USDT"; // same type+expiry as CLOSE_SYMBOL
+    const client = new MockClient("k", "s", "u");
+    (client.signedGet as jest.Mock)
+      .mockResolvedValueOnce(mockLongPosition) // the long being closed (size 2)
+      .mockResolvedValueOnce({
+        list: [
+          { symbol: CLOSE_SYMBOL, side: "Buy", size: "2", avgPrice: "1000" },
+          { symbol: SHORT_DEPENDENT, side: "Sell", size: "2", avgPrice: "500" },
+        ],
+      });
+    (client.publicGet as jest.Mock).mockResolvedValueOnce(mockTicker);
+    (client.signedPost as jest.Mock).mockResolvedValueOnce(mockCloseOrderResult);
+
+    await expect(
+      handleCloseOptionPosition(client, { symbol: CLOSE_SYMBOL, orderType: "Market", confirm: "CONFIRM" })
+    ).rejects.toThrow(/uncovered|naked/i);
+    expect(client.signedPost).not.toHaveBeenCalled();
+  });
+
+  it("close allows a partial close that keeps the dependent short covered", async () => {
+    const SHORT_DEPENDENT = "BTC-25APR28-90000-C-USDT";
+    const client = new MockClient("k", "s", "u");
+    (client.signedGet as jest.Mock)
+      .mockResolvedValueOnce(mockLongPosition) // size 2
+      .mockResolvedValueOnce({
+        list: [
+          { symbol: CLOSE_SYMBOL, side: "Buy", size: "2", avgPrice: "1000" },
+          { symbol: SHORT_DEPENDENT, side: "Sell", size: "1", avgPrice: "500" },
+        ],
+      });
+    (client.publicGet as jest.Mock).mockResolvedValueOnce(mockTicker);
+    (client.signedPost as jest.Mock).mockResolvedValueOnce(mockCloseOrderResult);
+
+    const result = await handleCloseOptionPosition(client, {
+      symbol: CLOSE_SYMBOL, qty: 1, orderType: "Market", confirm: "CONFIRM",
+    });
+    expect((result as CloseOptionResult).closedQty).toBe(1);
+  });
+
+  it("close proceeds without the coverage fetch when OPTIONS_ALLOW_NAKED_SHORT=true", async () => {
+    process.env.OPTIONS_ALLOW_NAKED_SHORT = "true";
+    const client = new MockClient("k", "s", "u");
+    (client.signedGet as jest.Mock).mockResolvedValueOnce(mockLongPosition);
+    (client.publicGet as jest.Mock).mockResolvedValueOnce(mockTicker);
+    (client.signedPost as jest.Mock).mockResolvedValueOnce(mockCloseOrderResult);
+
+    const result = await handleCloseOptionPosition(client, {
+      symbol: CLOSE_SYMBOL, orderType: "Market", confirm: "CONFIRM",
+    });
+    expect((result as CloseOptionResult).orderId).toBe("close-order-1");
   });
 });

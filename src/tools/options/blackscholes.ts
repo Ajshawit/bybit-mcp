@@ -22,6 +22,34 @@ function normpdf(x: number): number {
 }
 
 /**
+ * Black-Scholes price with r=0 (crypto convention).
+ * Degenerate inputs (T<=0, sigma<=0, bad spot/strike) collapse to intrinsic
+ * value — the same limit the Greeks function uses.
+ */
+export function blackScholesPrice(
+  type: "call" | "put",
+  spot: number,
+  strike: number,
+  timeToExpiryYears: number,
+  iv: number
+): number {
+  if (timeToExpiryYears <= 0 || !(iv > 0) || !(spot > 0) || !(strike > 0)) {
+    return type === "call"
+      ? Math.max(spot - strike, 0)
+      : Math.max(strike - spot, 0);
+  }
+
+  const sqrtT = Math.sqrt(timeToExpiryYears);
+  const d1 = (Math.log(spot / strike) + 0.5 * iv * iv * timeToExpiryYears) / (iv * sqrtT);
+  const d2 = d1 - iv * sqrtT;
+
+  if (type === "call") {
+    return spot * normcdf(d1) - strike * normcdf(d2);
+  }
+  return strike * normcdf(-d2) - spot * normcdf(-d1);
+}
+
+/**
  * Black-Scholes Greeks with r=0 (crypto convention).
  * Theta is daily (annualised / 365), negative for long positions.
  * Vega is per 1% change in IV (annualised vega / 100).
@@ -33,7 +61,10 @@ export function blackScholesGreeks(
   timeToExpiryYears: number,
   iv: number
 ): Greeks {
-  if (timeToExpiryYears <= 0) {
+  // T→0 and σ→0 share the same limit: the option behaves like its intrinsic
+  // value (delta = ITM indicator, all second-order greeks 0). Also guards
+  // NaN/non-positive inputs, which would otherwise propagate NaN through d1.
+  if (timeToExpiryYears <= 0 || !(iv > 0) || !(spot > 0) || !(strike > 0)) {
     const intrinsic = type === "call"
       ? Math.max(spot - strike, 0)
       : Math.max(strike - spot, 0);

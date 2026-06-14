@@ -58,3 +58,29 @@ describe("computeMoneyness", () => {
     expect(computeMoneyness(90, 100, "put")).toBe("OTM");
   });
 });
+
+// Bybit does not zero-pad expiry days for the 1st–9th of the month
+// (e.g. ETH-3JAN23-1250-P in the official docs) — the parser must accept
+// 1- and 2-digit days.
+describe("parseOptionSymbol single-digit expiry days", () => {
+  it("parses a single-digit day", () => {
+    const r = parseOptionSymbol("BTC-3OCT25-60000-C-USDT");
+    expect(r.underlying).toBe("BTC");
+    expect(r.strike).toBe(60000);
+    expect(r.type).toBe("call");
+    expect(r.expiry.getUTCDate()).toBe(3);
+    expect(r.expiry.getUTCMonth()).toBe(9); // OCT
+    expect(r.expiry.getUTCFullYear()).toBe(2025);
+  });
+
+  it("still parses two-digit days", () => {
+    const r = parseOptionSymbol("ETH-30MAY26-2500-P-USDT");
+    expect(r.expiry.getUTCDate()).toBe(30);
+  });
+
+  it("rejects malformed expiry segments", () => {
+    expect(() => parseOptionSymbol("BTC-OCT25-60000-C-USDT")).toThrow("Invalid option symbol");
+    expect(() => parseOptionSymbol("BTC-123OCT25-60000-C-USDT")).toThrow("Invalid option symbol");
+    expect(() => parseOptionSymbol("BTC-3XXX25-60000-C-USDT")).toThrow("Invalid option symbol");
+  });
+});

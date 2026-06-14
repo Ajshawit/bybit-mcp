@@ -1,12 +1,13 @@
 import crypto from "crypto";
 import { BybitClient, BybitError } from "../client";
 import { positionModeCache } from "../cache";
-import { floorToStep } from "../util";
+import { floorToStep, parseFiniteOr, parseFiniteOrThrow } from "../util";
 import { ensureInstrumentInfo, detectPositionIdx, fetchFillSnapshot, PerpCategory } from "./trade-shared";
 import { assertConfirm } from "./confirm";
 import {
   TickersResult, WalletBalanceResult, OrderCreateResult,
   PlaceTradeResult, ClosePositionResult, DryRunResult,
+  CloseDryRunResult, ManageDryRunResult,
 } from "./types";
 
 export interface PlacePerpParams {
@@ -59,6 +60,12 @@ function parseBaseCoin(symbol: string): string {
   return symbol.replace(/USD$/, "");
 }
 
+// USDC-settled linear contracts end in PERP (e.g. BTCPERP); everything else
+// linear settles in USDT. Hardcoding USDT mispriced every USDC-linear gate.
+function linearSettleCoin(symbol: string): "USDT" | "USDC" {
+  return symbol.endsWith("PERP") ? "USDC" : "USDT";
+}
+
 export async function handlePlacePerp(
   client: BybitClient,
   params: PlacePerpParams
@@ -91,7 +98,7 @@ export async function handlePlacePerp(
     );
   }
 
-  const marginCoin = category === "inverse" ? parseBaseCoin(symbol) : "USDT";
+  const marginCoin = category === "inverse" ? parseBaseCoin(symbol) : linearSettleCoin(symbol);
 
   const [inst, tickerRes, walletRes] = await Promise.all([
     ensureInstrumentInfo(client, category, symbol),
@@ -102,12 +109,16 @@ export async function handlePlacePerp(
     }),
   ]);
 
-  const marketPrice = parseFloat(tickerRes.list[0].lastPrice);
+  const marketPrice = parseFiniteOrThrow(tickerRes.list[0]?.lastPrice, `${symbol} ticker lastPrice`);
   const execPrice = orderType === "Limit" ? limitPrice! : marketPrice;
 
-  const coin = walletRes.list[0].coin.find((c) => c.coin === marginCoin);
+  const coin = walletRes.list[0]?.coin.find((c) => c.coin === marginCoin);
   if (!coin) throw new Error(`${marginCoin} coin not found in wallet balance response`);
-  const freeBalance = parseFloat(coin.walletBalance) - parseFloat(coin.totalPositionIM);
+  // Portfolio-margin accounts return totalPositionIM as "" — treat as 0 (IM is
+  // tracked account-wide there). walletBalance itself must parse, or every
+  // balance gate below would silently pass on NaN.
+  const freeBalance = parseFiniteOrThrow(coin.walletBalance, `${marginCoin} walletBalance`)
+    - parseFiniteOr(coin.totalPositionIM, 0);
 
   const rawQty = category === "inverse"
     ? margin * leverage * execPrice
@@ -126,9 +137,15 @@ export async function handlePlacePerp(
 
   if (dry_run) {
     const mmr = 0.005;
-    const estimatedLiqPrice = side === "Buy"
-      ? execPrice * (1 - 1 / leverage + mmr)
-      : execPrice * (1 + 1 / leverage - mmr);
+    // Inverse PnL is linear in 1/price, not price — the linear-contract
+    // formula systematically misplaces inverse liquidation estimates.
+    const estimatedLiqPrice = category === "inverse"
+      ? (side === "Buy"
+          ? execPrice * leverage / (leverage + 1 - mmr * leverage)
+          : execPrice * leverage / (leverage - 1 + mmr * leverage))
+      : (side === "Buy"
+          ? execPrice * (1 - 1 / leverage + mmr)
+          : execPrice * (1 + 1 / leverage - mmr));
     const warnings: string[] = [];
     if (margin > freeBalance) {
       warnings.push(
@@ -233,6 +250,7 @@ export async function handlePlacePerp(
     symbol,
     filledQty: qty,
     avgFillPrice: fill.avgFillPrice,
+    ...(fill.isFallback ? { avgFillPriceIsFallback: true as const } : {}),
     fillStatus: fill.fillStatus,
     cumExecQty: fill.cumExecQty,
     serverTimestamp: new Date().toISOString(),
@@ -270,21 +288,22 @@ export interface ClosePositionParams {
   orderType?: "Market" | "Limit";
   price?: number;
   notes?: string;
+  dry_run?: boolean;
   confirm?: string;
 }
 
 export async function handleClosePerp(
   client: BybitClient,
   params: ClosePositionParams
-): Promise<ClosePositionResult> {
+): Promise<ClosePositionResult | CloseDryRunResult> {
   const {
     symbol, side, category = "linear", percent = 100,
     qty: explicitQty, orderType = "Market", price: limitPrice,
-    notes, confirm,
+    notes, dry_run = false, confirm,
   } = params;
 
   // Gate first, shape validation second — same invariant as handlePlacePerp.
-  assertConfirm(confirm, false, "close_position");
+  assertConfirm(confirm, dry_run, "close_position");
 
   if (orderType === "Limit" && limitPrice == null) {
     throw new Error("price is required for Limit close orders");
@@ -310,6 +329,25 @@ export async function handleClosePerp(
 
   const remaining = parseFloat(pos.size) - parseFloat(closeQty);
   const closeSide = side === "Buy" ? "Sell" : "Buy";
+
+  if (dry_run) {
+    return {
+      dryRun: true,
+      category, symbol,
+      positionSide: side,
+      closeSide,
+      orderType,
+      closeQty,
+      currentSize: parseFloat(pos.size),
+      remainingSize: remaining,
+      ...(orderType === "Limit" ? { price: String(limitPrice) } : {}),
+      reduceOnly: true,
+      wouldSubmit: parseFloat(closeQty) > 0,
+      serverTimestamp: new Date().toISOString(),
+      notes,
+    };
+  }
+
   const nonce = crypto.randomBytes(3).toString("hex");
 
   const orderBody: Record<string, unknown> = {
@@ -360,20 +398,21 @@ export interface ManagePositionParams {
     trailingActivatePrice?: number;
   };
   notes?: string;
+  dry_run?: boolean;
   confirm?: string;
 }
 
 export async function handleManagePosition(
   client: BybitClient,
   params: ManagePositionParams
-): Promise<{ updated: boolean; symbol: string; serverTimestamp: string; notes?: string }> {
-  const { symbol, side, category = "linear", updates, notes, confirm } = params;
+): Promise<{ updated: boolean; symbol: string; serverTimestamp: string; notes?: string } | ManageDryRunResult> {
+  const { symbol, side, category = "linear", updates, notes, dry_run = false, confirm } = params;
 
   if (category === "spot" || category === "spot_margin") {
     throw new Error("manage_position is not supported for spot — spot has no persistent position");
   }
 
-  assertConfirm(confirm, false, "manage_position");
+  assertConfirm(confirm, dry_run, "manage_position");
 
   const positionIdx = await detectPositionIdx(client, category, symbol, side);
 
@@ -382,6 +421,17 @@ export async function handleManagePosition(
   if (updates.tp != null) body.takeProfit = String(updates.tp);
   if (updates.trailingStop != null) body.trailingStop = String(updates.trailingStop);
   if (updates.trailingActivatePrice != null) body.activePrice = String(updates.trailingActivatePrice);
+
+  if (dry_run) {
+    return {
+      dryRun: true,
+      symbol,
+      requestBody: body,
+      wouldSubmit: true,
+      serverTimestamp: new Date().toISOString(),
+      notes,
+    };
+  }
 
   await client.signedPost("/v5/position/trading-stop", body);
   return { updated: true, symbol, serverTimestamp: new Date().toISOString(), notes };

@@ -10,14 +10,18 @@ This MCP requires the following Bybit API key permissions:
 
 ## What is logged
 
-- Tool names and non-sensitive parameters (symbol, side, qty, orderType)
-- Server timestamps
-- Error messages from Bybit API responses
+Logging is minimal and goes to **stderr only** (stdout is the MCP transport):
+
+- A startup banner stating which network (testnet/mainnet) the server connects to
+- A warning when locally computed option Greeks diverge >5% from Bybit's (possible stale data)
+- A warning when an option position with an unparseable symbol is skipped in `get_account_status`
+
+No tool names, parameters, request bodies, or timestamps are logged.
 
 ## What is never logged
 
-- API keys or secrets
-- Full request bodies containing authentication headers
+- API keys or secrets (Bybit error messages are additionally scrubbed of the API key before reaching tool output)
+- Request bodies or authentication headers
 - Account balances or position details beyond what's returned to the user
 
 ## Reporting vulnerabilities

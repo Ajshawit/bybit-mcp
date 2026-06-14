@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { BybitClient } from "../../client";
 import { parseOptionSymbol, OPTION_MULTIPLIERS, OptionPayoffSummary, OptionTickersResult } from "./types";
+import { parseFiniteOr } from "../../util";
 import { WalletBalanceResult, OrderCreateResult } from "../types";
 import { handleGetOptionPayoff } from "./payoff";
 import { assertConfirm } from "../confirm";
@@ -89,6 +90,15 @@ interface PositionResult {
   }>;
 }
 
+interface OptionOpenOrdersResult {
+  list: Array<{
+    symbol: string;
+    side: "Buy" | "Sell";
+    qty: string;
+    leavesQty?: string;
+  }>;
+}
+
 
 export async function handlePlaceOptionTrade(
   client: BybitClient,
@@ -126,7 +136,19 @@ export async function handlePlaceOptionTrade(
     vega: parseFloat(t.vega),
   };
   const multiplier = OPTION_MULTIPLIERS[parsed.underlying] ?? 1;
-  const estimatedFillPrice = side === "Buy" ? ask1Price : bid1Price;
+  // An empty/zero ask parses to 0 (or NaN) and would zero out estimatedPremium,
+  // silently bypassing the balance gate and premium cap below. For buys, fall
+  // back to the limit price when the book is empty; refuse a Market buy outright.
+  let estimatedFillPrice = side === "Buy" ? ask1Price : bid1Price;
+  if (side === "Buy" && !(estimatedFillPrice > 0)) {
+    if (orderType === "Limit" && price != null) {
+      estimatedFillPrice = price;
+    } else {
+      throw new Error(
+        `No ask quote available for ${symbol} — cannot estimate premium for a Market buy. Use a Limit order with an explicit price.`
+      );
+    }
+  }
   const estimatedPremium = qty * estimatedFillPrice * multiplier;
 
   // Uncovered-short check. The position lookup runs for every Sell — even when
@@ -166,7 +188,29 @@ export async function handlePlaceOptionTrade(
       if (p.side === "Buy") longCover += size;
       else existingShort += size;
     }
-    const netLongCover = Math.max(0, longCover - existingShort);
+    let netLongCover = Math.max(0, longCover - existingShort);
+    if (qty <= netLongCover) {
+      // Looks covered by filled positions — but resting short orders will
+      // claim the same cover when they fill, so count their unfilled qty
+      // before trusting it. Resting BUY orders are NOT counted as cover
+      // (they may never fill). Skipped when the gate would already fire.
+      const ordersRes = await client.signedGet<OptionOpenOrdersResult>("/v5/order/realtime", {
+        category: "option",
+        baseCoin: parsed.underlying,
+      });
+      for (const o of ordersRes.list ?? []) {
+        if (o.side !== "Sell") continue;
+        let op: ReturnType<typeof parseOptionSymbol>;
+        try {
+          op = parseOptionSymbol(o.symbol);
+        } catch {
+          continue;
+        }
+        if (op.type !== parsed.type || op.expiry.getTime() !== parsed.expiry.getTime()) continue;
+        existingShort += parseFiniteOr(o.leavesQty, parseFiniteOr(o.qty, 0));
+      }
+      netLongCover = Math.max(0, longCover - existingShort);
+    }
     uncoveredShortQty = Math.max(0, qty - netLongCover);
     if (uncoveredShortQty > 0 && process.env.OPTIONS_ALLOW_NAKED_SHORT !== "true") {
       throw new Error(
@@ -180,22 +224,30 @@ export async function handlePlaceOptionTrade(
       accountType: "UNIFIED",
     });
     const account = walletRes.list[0];
-    const usdcCoin = account?.coin.find((c) => c.coin === "USDC");
-    const usdcBalance = parseFloat(usdcCoin?.walletBalance ?? "0");
+    // Every symbol this server accepts is a USDT-settled option (the parser
+    // requires the -USDT suffix), so the premium is charged in USDT.
+    const usdtCoin = account?.coin.find((c) => c.coin === "USDT");
+    const usdtBalance = parseFiniteOr(usdtCoin?.walletBalance, 0);
 
-    if (usdcBalance < estimatedPremium) {
+    if (usdtBalance < estimatedPremium) {
       throw new Error(
-        `Insufficient USDC: need ${estimatedPremium} USDC, have ${usdcBalance}. Bybit option premium is charged in USDC — USDT is not used.`
+        `Insufficient USDT: need ${estimatedPremium} USDT, have ${usdtBalance}. Bybit USDT-settled option premium is charged in USDT.`
       );
     }
 
-    const capPct = process.env.OPTIONS_MAX_PREMIUM_PCT_BALANCE
-      ? parseFloat(process.env.OPTIONS_MAX_PREMIUM_PCT_BALANCE)
-      : null;
-    if (capPct != null && estimatedPremium > (capPct / 100) * usdcBalance) {
-      throw new Error(
-        `Premium ${estimatedPremium} USDC exceeds ${capPct}% of USDC balance (${usdcBalance} USDC available).`
-      );
+    const capEnv = process.env.OPTIONS_MAX_PREMIUM_PCT_BALANCE;
+    if (capEnv != null && capEnv !== "") {
+      const capPct = parseFloat(capEnv);
+      if (!Number.isFinite(capPct) || capPct <= 0) {
+        throw new Error(
+          `OPTIONS_MAX_PREMIUM_PCT_BALANCE is set to "${capEnv}", which is not a positive number — refusing to submit with a malformed safety cap.`
+        );
+      }
+      if (estimatedPremium > (capPct / 100) * usdtBalance) {
+        throw new Error(
+          `Premium ${estimatedPremium} USDT exceeds ${capPct}% of USDT balance (${usdtBalance} USDT available).`
+        );
+      }
     }
   }
 
@@ -296,6 +348,39 @@ export async function handleCloseOptionPosition(
 
   const parsed = parseOptionSymbol(symbol);
   const multiplier = OPTION_MULTIPLIERS[parsed.underlying] ?? 1;
+
+  // Closing a long can silently convert an existing short of the same
+  // type+expiry into a naked short — its cover disappears. Gate it exactly
+  // like placing a new naked short unless explicitly allowed.
+  if (currentSide === "Long" && process.env.OPTIONS_ALLOW_NAKED_SHORT !== "true") {
+    const bookRes = await client.signedGet<PositionResult>("/v5/position/list", {
+      category: "option",
+      baseCoin: parsed.underlying,
+    });
+    let longCover = 0;
+    let dependentShort = 0;
+    for (const p of bookRes.list ?? []) {
+      const size = parseFloat(p.size);
+      if (!(size > 0) || (p.side !== "Buy" && p.side !== "Sell")) continue;
+      let pp: ReturnType<typeof parseOptionSymbol>;
+      try {
+        pp = parseOptionSymbol(p.symbol);
+      } catch {
+        continue;
+      }
+      if (pp.type !== parsed.type || pp.expiry.getTime() !== parsed.expiry.getTime()) continue;
+      if (p.side === "Buy") longCover += size;
+      else dependentShort += size;
+    }
+    const coverAfterClose = longCover - closeQty;
+    if (dependentShort > 0 && coverAfterClose < dependentShort) {
+      const uncoveredQty = dependentShort - Math.max(0, coverAfterClose);
+      throw new Error(
+        `Closing ${closeQty} ${symbol} would leave ${uncoveredQty} short contract(s) of the same type/expiry uncovered (naked). ` +
+        `Close or buy back the short leg first, or set OPTIONS_ALLOW_NAKED_SHORT=true to permit it.`
+      );
+    }
+  }
 
   if (dry_run) {
     const entryPremium = parseFloat(pos.avgPrice) * closeQty * multiplier;

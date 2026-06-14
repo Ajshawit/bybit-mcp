@@ -26,7 +26,22 @@ const liveQuote = {
   createdAt: 1,
   updatedAt: 1,
   quoteBuyList: [{ category: "option", symbol: "BTC-25APR26-80000-C-USDT", price: "1200" }],
-  quoteSellList: [],
+  quoteSellList: [{ category: "option", symbol: "BTC-25APR26-80000-C-USDT", price: "1150" }],
+};
+
+// The RFQ structure (legs with sides) behind the quote — the execute gate
+// assesses the book the taker would END UP with.
+const liveRfq = {
+  rfqId: "r",
+  rfqLinkId: "rl",
+  counterparties: ["LP"],
+  expiresAt: "2026-05-19T12:01:00Z",
+  strategyType: "custom",
+  status: "Active",
+  deskCode: "DESK",
+  createdAt: 1,
+  updatedAt: 1,
+  legs: [{ category: "option", symbol: "BTC-25APR26-80000-C-USDT", side: "buy", qty: "1" }],
 };
 
 interface ClientOpts {
@@ -48,6 +63,7 @@ function newClient(opts: ClientOpts = {}): BybitClient {
   (client.signedGet as jest.Mock).mockImplementation((path: string) => {
     if (path === "/v5/account/info") return Promise.resolve(accountInfo);
     if (path === "/v5/rfq/quote-realtime") return Promise.resolve({ list: [liveQuote] });
+    if (path === "/v5/rfq/rfq-realtime") return Promise.resolve({ list: [liveRfq] });
     return Promise.resolve({});
   });
 
@@ -270,7 +286,7 @@ describe("handleExecuteQuote", () => {
     ).rejects.toThrow(/Live RFQ submission is disabled/);
   });
 
-  it("submits live when writes enabled", async () => {
+  it("submits live when writes enabled, eligible, quote live, and risk allowed", async () => {
     process.env.RFQ_ENABLE_WRITES = "true";
     const client = newClient();
     const res = await handleExecuteQuote(client, {
@@ -281,6 +297,48 @@ describe("handleExecuteQuote", () => {
     });
     if ("dryRun" in res && res.dryRun) throw new Error("expected live result");
     expect(res.serverTimestamp).toBeDefined();
+  });
+
+  it("live execute blocked for an ineligible account", async () => {
+    process.env.RFQ_ENABLE_WRITES = "true";
+    const client = newClient({ accountInfo: ineligibleInfo });
+    await expect(
+      handleExecuteQuote(client, { rfqId: "r", quoteId: "q", quoteSide: "buy", dry_run: false, confirm: "CONFIRM" })
+    ).rejects.toThrow(/not RFQ-eligible|eligib/i);
+    expect(client.signedPost).not.toHaveBeenCalled();
+  });
+
+  it("live execute refuses when the quote is no longer live", async () => {
+    process.env.RFQ_ENABLE_WRITES = "true";
+    const client = newClient();
+    (client.signedGet as jest.Mock).mockImplementation((path: string) => {
+      if (path === "/v5/account/info") return Promise.resolve(eligibleInfo);
+      if (path === "/v5/rfq/quote-realtime") return Promise.resolve({ list: [] });
+      if (path === "/v5/rfq/rfq-realtime") return Promise.resolve({ list: [liveRfq] });
+      return Promise.resolve({});
+    });
+    await expect(
+      handleExecuteQuote(client, { rfqId: "r", quoteId: "q", quoteSide: "buy", dry_run: false, confirm: "CONFIRM" })
+    ).rejects.toThrow(/No live quote/);
+    expect(client.signedPost).not.toHaveBeenCalled();
+  });
+
+  it("live execute blocks when quoteSide=sell inverts the structure into a naked short", async () => {
+    process.env.RFQ_ENABLE_WRITES = "true";
+    const client = newClient();
+    // RFQ is a long call; hitting the LP's sell side means the taker SELLS the
+    // structure — ending up net short the call. The risk gate must see that.
+    await expect(
+      handleExecuteQuote(client, { rfqId: "r", quoteId: "q", quoteSide: "sell", dry_run: false, confirm: "CONFIRM" })
+    ).rejects.toThrow(/risk gate/i);
+    expect(client.signedPost).not.toHaveBeenCalled();
+  });
+
+  it("dry_run wouldSubmit is false while writes are disabled", async () => {
+    const client = newClient();
+    const res = await handleExecuteQuote(client, { rfqId: "r", quoteId: "q", quoteSide: "buy" });
+    if (!("dryRun" in res) || res.dryRun !== true) throw new Error("expected dry run");
+    expect(res.wouldSubmit).toBe(false);
   });
 });
 

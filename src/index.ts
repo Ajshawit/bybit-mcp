@@ -8,6 +8,14 @@ import {
 import { BybitClient } from "./client";
 import { handleGetAccountStatus } from "./tools/account";
 import { handleGetMarketData, handleScanMarket, handleGetOhlc, handleGetMarketRegime, handleListTradfiInstruments, ScanFilter } from "./tools/market";
+import { handleGetVolatility } from "./tools/volatility";
+import { handleGetCarryAnalytics } from "./tools/carry";
+import { handleEstimateExecutionCost } from "./tools/execution";
+import { handleGetPortfolioRisk } from "./tools/portfolio";
+import { handleGetEventCalendar } from "./tools/calendar";
+import { handleCalculatePositionSize, SizingMethod } from "./tools/sizing";
+import { handleGetPerformanceStats } from "./tools/performance";
+import { handleAnalyzePair } from "./tools/pairs";
 import { handlePlaceTrade, handleClosePosition, handleManagePosition } from "./tools/trade";
 import { handleListOpenOrders, handleCancelOrder, handleGetClosedTrades } from "./tools/orders";
 import {
@@ -26,8 +34,22 @@ import type {
   CreateRfqLeg, RfqSide,
 } from "./tools/rfq/index.js";
 
-const MAINNET_URL = "https://api.bybit.com";
-const TESTNET_URL = "https://api-testnet.bybit.com";
+import { readFileSync } from "fs";
+import { join } from "path";
+import { resolveBaseUrl, isEnvEnabled, TESTNET_URL } from "./config";
+import { createSampleFileStore } from "./storage";
+import { assertBooleanFlag, assertOneOf } from "./tools/confirm";
+
+// Report the real package version over MCP instead of a hardcoded constant
+// that drifts from package.json.
+function packageVersion(): string {
+  try {
+    const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf8")) as { version?: string };
+    return pkg.version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
 
 function createServer(
   apiKey: string,
@@ -35,14 +57,14 @@ function createServer(
   enableOptions: boolean,
   enableRfq: boolean
 ): Server {
-  const baseUrl = process.env.BYBIT_TESTNET !== "false" ? TESTNET_URL : MAINNET_URL;
+  const baseUrl = resolveBaseUrl(process.env.BYBIT_TESTNET);
   const client = new BybitClient(apiKey, apiSecret, baseUrl);
   const ENABLE_OPTIONS = enableOptions;
   const ENABLE_RFQ = enableRfq;
-  const ivStore = ENABLE_OPTIONS ? new IVSampleStore() : null;
+  const ivStore = ENABLE_OPTIONS ? new IVSampleStore(createSampleFileStore("iv-samples")) : null;
 
   const server = new Server(
-    { name: "bybit-quant", version: "1.0.0" },
+    { name: "bybit-quant", version: packageVersion() },
     { capabilities: { tools: {} } }
   );
 
@@ -75,11 +97,11 @@ function createServer(
       },
       {
         name: "scan_market",
-        description: "Scan all linear perpetuals for a specific market condition. Returns raw numbers and short machine-readable tags. Filters: oi_divergence (price/OI divergence signals), crowded_positioning (extreme funding + range), volume_spike (unusual hourly volume).",
+        description: "Scan all linear perpetuals for a specific market condition. Returns raw numbers and short machine-readable tags. Filters: oi_divergence (price/OI divergence signals), crowded_positioning (extreme funding + range, with fundingZScore vs the trailing ~200-epoch history), volume_spike (unusual hourly volume), account_ratio (retail crowding: long/short account ratio >= 2 or <= 0.5 from /v5/market/account-ratio, with the 24h-ago ratio and fundingZScore — contrarian signal when crowding and funding stretch together).",
         inputSchema: {
           type: "object" as const,
           properties: {
-            filter: { type: "string", enum: ["oi_divergence", "crowded_positioning", "volume_spike"] },
+            filter: { type: "string", enum: ["oi_divergence", "crowded_positioning", "volume_spike", "account_ratio"] },
             minVolume24hUsd: { type: "number", description: "Minimum 24h volume in USD. Default: 10000000" },
             limit: { type: "number", description: "Maximum results to return. Default: 15" },
           },
@@ -129,6 +151,139 @@ function createServer(
         },
       },
       {
+        name: "get_volatility",
+        description: "Realized-volatility analytics for any symbol. Returns three annualized RV estimators over a recent window (closeToClose, parkinson high-low, yangZhang), plus a vol cone — current RV vs its own min/p25/median/p75/max across 1d/3d/7d/14d/30d horizons over the fetched history. When options are enabled and symbol is BTCUSDT/ETHUSDT/SOLUSDT, also returns the ATM IV from the expiry nearest the RV window with ivMinusRv (positive = implied rich vs realized — the variance-risk-premium signal for vol selling/buying decisions). All volatilities are annualized decimals (0.45 = 45%), same convention as option markIv.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            symbol: { type: "string", description: "e.g. BTCUSDT" },
+            category: { type: "string", enum: ["linear", "inverse", "spot"], description: "Default: linear" },
+            interval: {
+              type: "string",
+              enum: ["1", "3", "5", "15", "30", "60", "120", "240", "360", "720", "D", "W", "M"],
+              description: "Bar interval the estimators run on. Default: 60 (1 hour)",
+            },
+            limit: { type: "number", minimum: 10, maximum: 1000, description: "Bars of history to fetch (sets vol-cone depth). Default: 1000" },
+            windowBars: { type: "number", description: "Estimator window in bars. Default: ~7 days of bars (clamped 24-336)" },
+            compareIv: { type: "boolean", description: "Compare against ATM IV when options are enabled. Default: true" },
+          },
+          required: ["symbol"],
+        },
+      },
+      {
+        name: "get_carry_analytics",
+        description: "Basis and funding-carry analytics. action='basis' (requires symbol): perp mark-vs-index basis, current + realized funding annualized, PREDICTED next funding estimated from the premium index via Bybit's formula, perp-vs-spot basis when a spot market exists, and annualized basis for dated futures. action='scan': rank all linear perps by annualized funding carry — shortPerpCollects (positive funding: short perp hedged with spot earns it) and longPerpCollects (negative funding: long perp earns) — using each symbol's real funding interval (1h/2h/4h/8h). Use for delta-neutral carry trades and funding-arb candidate discovery.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            action: { type: "string", enum: ["basis", "scan"] },
+            symbol: { type: "string", description: "Required for action 'basis'. e.g. BTCUSDT" },
+            minVolume24hUsd: { type: "number", description: "For scan: minimum 24h volume in USD. Default: 10000000" },
+            limit: { type: "number", description: "For scan: max symbols per side. Default: 10" },
+          },
+          required: ["action"],
+        },
+      },
+      {
+        name: "get_portfolio_risk",
+        description: "Portfolio-level risk aggregation and scenario stress test. Sums delta across ALL open positions (linear perps, inverse perps, and options when enabled) grouped by underlying — perp delta in USD, option Greeks (delta/gamma/vega/theta) from Bybit position data — and reports totals: net & gross delta USD, vega per 1 IV pt, theta/day, gross notional, leverage ratio, concentration. Then shocks spot (default ±5/10/20%) × IV (default ±10 pts, options only) and returns a PnL grid with the worst-case cell, repricing options via Black-Scholes (time held constant). Use to answer 'what is my real net exposure and what does a -20% gap do to the account?'",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            spotShocksPct: { type: "array", items: { type: "number" }, description: "Spot shock percentages, e.g. [-30,-15,0,15,30]. Max 9 values; 0 auto-included. Default: [-20,-10,-5,0,5,10,20]" },
+            ivShocksPts: { type: "array", items: { type: "number" }, description: "IV shocks in vol points (only applied when option positions exist). Max 9 values; 0 auto-included. Default: [-10,0,10]" },
+          },
+          required: [],
+        },
+      },
+      {
+        name: "estimate_execution_cost",
+        description: "Pre-trade execution cost estimate from deep orderbook data (500 levels for perps, 200 for spot). Walks the book for your size and returns expected average fill price, slippage vs mid (bps), worst-level slippage, book imbalance (bid/ask depth ratio), taker/maker fees from your account's actual fee tier, the all-in cost (slippage + taker fee, bps), and the max size executable within maxSlippageBps. Run this before place_trade to answer 'is this order too big for this book?' — a bookExhausted warning means the order would sweep the entire visible book. Specify size as qty (base units; USD contracts for inverse) or notionalUsd.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            symbol: { type: "string", description: "e.g. BTCUSDT" },
+            side: { type: "string", enum: ["Buy", "Sell"] },
+            category: { type: "string", enum: ["linear", "inverse", "spot"], description: "Default: linear" },
+            qty: { type: "number", description: "Order size in base units (USD contracts for inverse). Provide qty or notionalUsd." },
+            notionalUsd: { type: "number", description: "Order size in USD. Provide qty or notionalUsd." },
+            maxSlippageBps: { type: "number", description: "Threshold for the maxExecutable calculation. Default: 10" },
+            includeFees: { type: "boolean", description: "Fetch account taker/maker fee rates (signed call). Default: true" },
+          },
+          required: ["symbol", "side"],
+        },
+      },
+      {
+        name: "get_event_calendar",
+        description: "Upcoming market events in one call: next funding time + rate per symbol (defaults to your open-position symbols, else BTC/ETH majors), option expiry schedule per underlying with contract count and open-interest notional by date (when options are enabled), dated-futures delivery dates, and current NYSE session status (relevant for xStocks/stock perps). Use for timing decisions — e.g. avoid paying an imminent funding print, or know how much OI expires Friday.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            symbols: { type: "array", items: { type: "string" }, description: "Symbols for the funding section (max 10, assumed linear). Default: open-position symbols, else BTCUSDT/ETHUSDT." },
+            daysAhead: { type: "number", description: "Event horizon in days for expiries/deliveries (1-365). Default: 45" },
+          },
+          required: [],
+        },
+      },
+      {
+        name: "calculate_position_size",
+        description: "Position sizing calculator — pure advisory math, no order is placed. method='risk_per_trade': quantity whose loss at your stop equals a USD risk budget (riskUsd, or riskPctEquity — default 1% of equity). method='kelly': fractional Kelly (default 0.25× full Kelly) from win/loss stats — pass winRate/avgWinUsd/avgLossUsd explicitly or omit all three to derive them from recent closed trades. method='vol_target': size so the position contributes targetAnnualVolPct of annualized volatility on equity (realized vol from ~7 days of hourly bars). Output qty is floored to the instrument qty step (base units; USD contracts for inverse) plus notional, realized risk at the rounded qty, margin at your leverage, and a liquidation-distance check: estimated liq price vs your stop and the max leverage that keeps liquidation safely beyond the stop (10% buffer). Run before place_trade to turn a risk budget into an order quantity.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            symbol: { type: "string", description: "e.g. BTCUSDT" },
+            method: { type: "string", enum: ["risk_per_trade", "vol_target", "kelly"] },
+            category: { type: "string", enum: ["linear", "inverse", "spot"], description: "Default: linear" },
+            side: { type: "string", enum: ["Buy", "Sell"], description: "Default: Buy. Spot supports Buy only." },
+            entryPrice: { type: "number", description: "Planned entry price. Default: current last price." },
+            stopPrice: { type: "number", description: "Stop-loss price. Required for risk_per_trade and kelly; also enables the liquidation-distance check." },
+            riskUsd: { type: "number", description: "risk_per_trade: absolute USD risk budget. Mutually exclusive with riskPctEquity." },
+            riskPctEquity: { type: "number", description: "risk_per_trade: risk as % of equity. Default: 1." },
+            targetAnnualVolPct: { type: "number", description: "vol_target: target annualized vol contribution as % of equity, e.g. 10." },
+            kellyFraction: { type: "number", description: "kelly: fraction of full Kelly to apply, in (0,1]. Default: 0.25." },
+            winRate: { type: "number", description: "kelly: explicit win rate (0-1). Provide together with avgWinUsd and avgLossUsd, or omit all three to use closed-trade history." },
+            avgWinUsd: { type: "number", description: "kelly: average winning trade in USD." },
+            avgLossUsd: { type: "number", description: "kelly: average losing trade in USD (positive number)." },
+            leverage: { type: "number", description: "Planned leverage — enables marginRequiredUsd and estimatedLiqPrice outputs. Perps only." },
+            equityUsd: { type: "number", description: "Equity override. Default: fetches wallet totalEquity (signed call)." },
+          },
+          required: ["symbol", "method"],
+        },
+      },
+      {
+        name: "analyze_pair",
+        description: "Pairs / stat-arb toolkit: relate any symbol to a benchmark (default BTCUSDT) over shared kline history. Returns log-return correlation (full sample + recent window) and beta — the OLS hedge ratio, with hedgeNotionalUsdPer1kUsd telling you how much benchmark notional hedges $1k of the symbol; the pair log-spread (ln(symbol) − h·ln(benchmark)) with its z-score vs the fetched history and a signal tag (spread_rich / spread_cheap at |z| ≥ 2, else neutral); and an AR(1) mean-reversion half-life estimate in bars/hours/days (null when the spread is trending, not mean-reverting). Series are aligned on shared timestamps. Use for hedge sizing, alt/BTC divergence, and pair-trade entry timing.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            symbol: { type: "string", description: "Symbol to analyze, e.g. ETHUSDT" },
+            benchmark: { type: "string", description: "Benchmark symbol. Default: BTCUSDT" },
+            category: { type: "string", enum: ["linear", "inverse", "spot"], description: "Default: linear (applies to both legs)" },
+            interval: {
+              type: "string",
+              enum: ["1", "3", "5", "15", "30", "60", "120", "240", "360", "720", "D", "W", "M"],
+              description: "Bar interval. Default: 60 (1 hour)",
+            },
+            limit: { type: "number", minimum: 50, maximum: 1000, description: "Bars of history. Default: 500" },
+            windowBars: { type: "number", description: "Recent-window size for correlationRecent/betaRecent. Default: 168" },
+          },
+          required: ["symbol"],
+        },
+      },
+      {
+        name: "get_performance_stats",
+        description: "Closed-trade performance analytics over an arbitrary lookback (default 30 days, max 180) — aggregates /v5/position/closed-pnl across Bybit's 7-day query windows with pagination (cap 1000 trades, newest kept). Returns win rate, profit factor, expectancy, average/largest win and loss, payoff ratio; annualized Sharpe and Sortino computed on the daily USD PnL series (scale-dependent — not comparable to return-based ratios or across account sizes); max drawdown on the cumulative PnL curve; per-symbol attribution sorted by total PnL; long-vs-short breakdown; and hold-time stats. Use for 'how is my trading actually going?' reviews and as the stats source for calculate_position_size method='kelly'.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            category: { type: "string", enum: ["linear", "inverse"], description: "Default: linear" },
+            symbol: { type: "string", description: "Restrict to one symbol e.g. BTCUSDT. Omit for all symbols." },
+            daysBack: { type: "number", minimum: 1, maximum: 180, description: "Lookback window in days. Default: 30" },
+          },
+          required: [],
+        },
+      },
+      {
         name: "place_trade",
         description: "Place a trade on a Bybit linear perp, inverse perp, or spot market. Supports market, limit, and conditional/stop entry orders (pass `triggerPrice` to create a stop-market or stop-limit entry — e.g. breakout long: side=Buy, triggerPrice above current price). For inverse perps the `margin` field is in base coin units (e.g. BTC for BTCUSD). CONFIRMATION REQUIRED: (1) Present the full trade plan — symbol, category, side, margin, leverage (perps), SL (perps), TP, estimated position size. (2) Wait for the user to reply with 'CONFIRM'. (3) Only call this tool after receiving explicit CONFIRM. Never call this tool in the same turn as presenting the trade plan. Recommended workflow: present plan → CONFIRM → call with dry_run=true → verify computedQty, notional, and warnings → call again with dry_run=false. The dry_run call does not require a second CONFIRM. If dry_run returns wouldSubmit: false, do not proceed without addressing the warnings. TradFi: xStock tokens use category=spot (e.g. TSLAXUSDT — tokenized equities, no leverage or SL required). Stock perpetuals and commodity perpetuals use category=linear (e.g. TSLAPUSDT for TSLA perp, XAUUSDT for gold). Call list_tradfi_instruments to confirm the exact symbol before the first TradFi trade in a session.",
         inputSchema: {
@@ -146,11 +301,11 @@ function createServer(
             trailingStop: { type: "number", description: "Trailing stop distance in quote currency. Optional, perps only." },
             trailingActivatePrice: { type: "number", description: "Price at which trailing stop activates. Optional, perps only." },
             triggerPrice: { type: "number", description: "Optional. Turns the order into a conditional/stop entry — the order rests until last/mark/index price crosses this level, then submits as the chosen orderType (Market = stop-market, Limit = stop-limit). Use for breakout/breakdown setups." },
-            triggerBy: { type: "string", enum: ["LastPrice", "MarkPrice", "IndexPrice"], description: "Which price feed the trigger watches. Default: LastPrice." },
-            triggerDirection: { type: "number", enum: [1, 2], description: "1 = trigger when price rises to triggerPrice; 2 = falls to. Auto-derived from triggerPrice vs current market price if omitted." },
+            triggerBy: { type: "string", enum: ["LastPrice", "MarkPrice", "IndexPrice"], description: "Which price feed the trigger watches. Default: LastPrice. Perps only — Bybit defines this for linear/inverse; ignored for spot conditionals." },
+            triggerDirection: { type: "number", enum: [1, 2], description: "1 = trigger when price rises to triggerPrice; 2 = falls to. Auto-derived from triggerPrice vs current market price if omitted. Perps only — ignored for spot conditionals." },
             notes: { type: "string", description: "Trade rationale — echoed back in response" },
             dry_run: { type: "boolean", description: "If true, returns computed order details without submitting. Default: false. executionPrice in the result is the current last-traded price, not a slippage-adjusted estimate — actual fill may differ." },
-            confirm: { type: "string", description: "Must equal the literal string 'CONFIRM' (case-sensitive, no whitespace) to submit live. Schema-enforced. Omit when dry_run=true." },
+            confirm: { type: "string", description: "Must equal the literal string 'CONFIRM' (case-sensitive, no whitespace) to submit live. Validated server-side at call time. Omit when dry_run=true." },
           },
           // Conditional requirements (price for Limit; leverage+sl for perps)
           // are enforced at runtime in the trade handlers — JSON Schema
@@ -173,7 +328,8 @@ function createServer(
             orderType: { type: "string", enum: ["Market", "Limit"], description: "Default: Market. Use Limit for layered take-profit ladders at specific prices — perp/inverse only. The order stays reduceOnly:true, so it can only shrink the position, never accidentally open a new one." },
             price: { type: "number", exclusiveMinimum: 0, description: "Required when orderType=Limit. The limit price for the reduce-only close order. Must be > 0." },
             notes: { type: "string", description: "Rationale — echoed back in response" },
-            confirm: { type: "string", description: "Must equal the literal string 'CONFIRM' (case-sensitive, no whitespace). Schema-enforced." },
+            dry_run: { type: "boolean", description: "If true, returns the computed close (closeQty, remainingSize) without submitting. No confirm needed. Default: false." },
+            confirm: { type: "string", description: "Must equal the literal string 'CONFIRM' (case-sensitive, no whitespace). Validated server-side at call time." },
           },
           required: ["symbol", "side"],
         },
@@ -197,7 +353,8 @@ function createServer(
               },
             },
             notes: { type: "string", description: "Rationale — echoed back in response" },
-            confirm: { type: "string", description: "Must equal the literal string 'CONFIRM' (case-sensitive, no whitespace). Schema-enforced." },
+            dry_run: { type: "boolean", description: "If true, returns the trading-stop request body that would be sent, without submitting. No confirm needed. Default: false." },
+            confirm: { type: "string", description: "Must equal the literal string 'CONFIRM' (case-sensitive, no whitespace). Validated server-side at call time." },
           },
           required: ["symbol", "side", "updates"],
         },
@@ -208,8 +365,8 @@ function createServer(
         inputSchema: {
           type: "object" as const,
           properties: {
-            symbol: { type: "string", description: "Filter by symbol e.g. BTCUSDT. Omit to list all symbols." },
-            category: { type: "string", enum: ["linear", "inverse", "spot", "spot_margin", "option"], description: "Default: linear" },
+            symbol: { type: "string", description: "Filter by symbol e.g. BTCUSDT. Omit to list all symbols (linear defaults to USDT-settled; pass a symbol for USDC-linear)." },
+            category: { type: "string", enum: ["linear", "inverse", "spot", "option"], description: "Default: linear. (spot_margin orders live in the spot order book — use 'spot'.)" },
           },
           required: [],
         },
@@ -222,8 +379,10 @@ function createServer(
           properties: {
             symbol: { type: "string", description: "Symbol e.g. BTCUSDT" },
             orderId: { type: "string", description: "Order ID from list_open_orders or place_trade response" },
-            category: { type: "string", enum: ["linear", "inverse", "spot", "spot_margin", "option"], description: "Default: linear" },
-            confirm: { type: "string", description: "Must equal the literal string 'CONFIRM' (case-sensitive, no whitespace). Schema-enforced." },
+            category: { type: "string", enum: ["linear", "inverse", "spot", "option"], description: "Default: linear. (spot_margin orders live in the spot order book — use 'spot'.)" },
+            orderFilter: { type: "string", enum: ["Order", "StopOrder", "tpslOrder"], description: "Spot only: which order book the orderId lives in. Spot conditional orders created by place_trade use 'StopOrder'. If omitted, a failed spot cancel is automatically retried with 'StopOrder'." },
+            dry_run: { type: "boolean", description: "If true, echoes what would be cancelled without submitting. No confirm needed. Default: false." },
+            confirm: { type: "string", description: "Must equal the literal string 'CONFIRM' (case-sensitive, no whitespace). Validated server-side at call time." },
           },
           required: ["symbol", "orderId"],
         },
@@ -337,7 +496,7 @@ function createServer(
               price: { type: "number", description: "Required for Limit orders" },
               notes: { type: "string", description: "Trade rationale — echoed back in response" },
               dry_run: { type: "boolean", description: "If true, returns trade plan without submitting. Default: false" },
-              confirm: { type: "string", description: "Must equal the literal string 'CONFIRM' (case-sensitive, no whitespace) to submit live. Schema-enforced. Omit when dry_run=true." },
+              confirm: { type: "string", description: "Must equal the literal string 'CONFIRM' (case-sensitive, no whitespace) to submit live. Validated server-side at call time. Omit when dry_run=true." },
             },
             required: ["symbol", "side", "qty", "orderType"],
           },
@@ -354,7 +513,7 @@ function createServer(
               price: { type: "number", description: "Required for Limit orders" },
               notes: { type: "string", description: "Rationale — echoed back in response" },
               dry_run: { type: "boolean", description: "If true, returns close plan without submitting. Default: false" },
-              confirm: { type: "string", description: "Must equal the literal string 'CONFIRM' (case-sensitive, no whitespace) to submit live. Schema-enforced. Omit when dry_run=true." },
+              confirm: { type: "string", description: "Must equal the literal string 'CONFIRM' (case-sensitive, no whitespace) to submit live. Validated server-side at call time. Omit when dry_run=true." },
             },
             required: ["symbol", "orderType"],
           },
@@ -442,7 +601,7 @@ function createServer(
               strategyType: { type: "string" },
               estimatedNotionalUsd: { type: "number", description: "Your estimate of the RFQ's USD notional; checked against the 10,000 USD minimum" },
               dry_run: { type: "boolean", description: "Default true. Must be explicitly false to submit." },
-              confirm: { type: "string", description: "Must equal the literal string 'CONFIRM' (case-sensitive, no whitespace) to submit live. Schema-enforced. Omit when dry_run=true (the default)." },
+              confirm: { type: "string", description: "Must equal the literal string 'CONFIRM' (case-sensitive, no whitespace) to submit live. Validated server-side at call time. Omit when dry_run=true (the default)." },
             },
             required: ["counterparties", "list"],
           },
@@ -457,7 +616,7 @@ function createServer(
               quoteId: { type: "string" },
               quoteSide: { type: "string", enum: ["buy", "sell"], description: "Side of the quote to take" },
               dry_run: { type: "boolean", description: "Default true. Must be explicitly false to submit." },
-              confirm: { type: "string", description: "Must equal the literal string 'CONFIRM' (case-sensitive, no whitespace) to submit live. Schema-enforced. Omit when dry_run=true (the default)." },
+              confirm: { type: "string", description: "Must equal the literal string 'CONFIRM' (case-sensitive, no whitespace) to submit live. Validated server-side at call time. Omit when dry_run=true (the default)." },
             },
             required: ["rfqId", "quoteId", "quoteSide"],
           },
@@ -537,12 +696,125 @@ function createServer(
           break;
         }
 
+        case "get_volatility": {
+          const data = await handleGetVolatility(client, ENABLE_OPTIONS, {
+            symbol: a.symbol as string,
+            category: a.category as "linear" | "inverse" | "spot" | undefined,
+            interval: a.interval as string | undefined,
+            limit: a.limit as number | undefined,
+            windowBars: a.windowBars as number | undefined,
+            compareIv: a.compareIv as boolean | undefined,
+          });
+          result = { ...data, serverTimestamp: new Date().toISOString() };
+          break;
+        }
+
+        case "get_carry_analytics": {
+          const carryAction = assertOneOf(a.action, ["basis", "scan"] as const, "action", "get_carry_analytics");
+          if (!carryAction) throw new Error("get_carry_analytics: action is required ('basis' or 'scan')");
+          const data = await handleGetCarryAnalytics(client, {
+            action: carryAction,
+            symbol: a.symbol as string | undefined,
+            minVolume24hUsd: a.minVolume24hUsd as number | undefined,
+            limit: a.limit as number | undefined,
+          });
+          result = { ...data, serverTimestamp: new Date().toISOString() };
+          break;
+        }
+
+        case "get_portfolio_risk": {
+          const data = await handleGetPortfolioRisk(client, ENABLE_OPTIONS, {
+            spotShocksPct: a.spotShocksPct as number[] | undefined,
+            ivShocksPts: a.ivShocksPts as number[] | undefined,
+          });
+          result = { ...data, serverTimestamp: new Date().toISOString() };
+          break;
+        }
+
+        case "estimate_execution_cost": {
+          const data = await handleEstimateExecutionCost(client, {
+            symbol: a.symbol as string,
+            side: assertOneOf(a.side, ["Buy", "Sell"] as const, "side", "estimate_execution_cost") as "Buy" | "Sell",
+            category: assertOneOf(a.category, ["linear", "inverse", "spot"] as const, "category", "estimate_execution_cost"),
+            qty: a.qty as number | undefined,
+            notionalUsd: a.notionalUsd as number | undefined,
+            maxSlippageBps: a.maxSlippageBps as number | undefined,
+            includeFees: a.includeFees as boolean | undefined,
+          });
+          result = { ...data, serverTimestamp: new Date().toISOString() };
+          break;
+        }
+
+        case "get_event_calendar": {
+          const data = await handleGetEventCalendar(client, ENABLE_OPTIONS, {
+            symbols: a.symbols as string[] | undefined,
+            daysAhead: a.daysAhead as number | undefined,
+          });
+          result = { ...data, serverTimestamp: new Date().toISOString() };
+          break;
+        }
+
+        case "calculate_position_size": {
+          const sizingMethod = assertOneOf(
+            a.method,
+            ["risk_per_trade", "vol_target", "kelly"] as const,
+            "method",
+            "calculate_position_size"
+          );
+          if (!sizingMethod) throw new Error("calculate_position_size: method is required (risk_per_trade, vol_target, or kelly)");
+          const data = await handleCalculatePositionSize(client, {
+            symbol: a.symbol as string,
+            method: sizingMethod as SizingMethod,
+            category: assertOneOf(a.category, ["linear", "inverse", "spot"] as const, "category", "calculate_position_size"),
+            side: assertOneOf(a.side, ["Buy", "Sell"] as const, "side", "calculate_position_size"),
+            entryPrice: a.entryPrice as number | undefined,
+            stopPrice: a.stopPrice as number | undefined,
+            riskUsd: a.riskUsd as number | undefined,
+            riskPctEquity: a.riskPctEquity as number | undefined,
+            targetAnnualVolPct: a.targetAnnualVolPct as number | undefined,
+            kellyFraction: a.kellyFraction as number | undefined,
+            winRate: a.winRate as number | undefined,
+            avgWinUsd: a.avgWinUsd as number | undefined,
+            avgLossUsd: a.avgLossUsd as number | undefined,
+            leverage: a.leverage as number | undefined,
+            equityUsd: a.equityUsd as number | undefined,
+          });
+          result = { ...data, serverTimestamp: new Date().toISOString() };
+          break;
+        }
+
+        case "analyze_pair": {
+          const data = await handleAnalyzePair(client, {
+            symbol: a.symbol as string,
+            benchmark: a.benchmark as string | undefined,
+            category: assertOneOf(a.category, ["linear", "inverse", "spot"] as const, "category", "analyze_pair"),
+            interval: a.interval as string | undefined,
+            limit: a.limit as number | undefined,
+            windowBars: a.windowBars as number | undefined,
+          });
+          result = { ...data, serverTimestamp: new Date().toISOString() };
+          break;
+        }
+
+        case "get_performance_stats": {
+          const data = await handleGetPerformanceStats(client, {
+            category: assertOneOf(a.category, ["linear", "inverse"] as const, "category", "get_performance_stats"),
+            symbol: a.symbol as string | undefined,
+            daysBack: a.daysBack as number | undefined,
+          });
+          result = { ...data, serverTimestamp: new Date().toISOString() };
+          break;
+        }
+
         case "place_trade": {
+          // Gate-relevant params are runtime-validated: schema enums are
+          // advisory only (the SDK does no server-side argument validation),
+          // and a wrong-typed value here routes around the safety rails.
           const tradeData = await handlePlaceTrade(client, {
             symbol: a.symbol as string,
-            side: a.side as "Buy" | "Sell",
+            side: assertOneOf(a.side, ["Buy", "Sell"] as const, "side", "place_trade") as "Buy" | "Sell",
             margin: a.margin as number,
-            category: a.category as "linear" | "inverse" | "spot" | "spot_margin" | undefined,
+            category: assertOneOf(a.category, ["linear", "inverse", "spot", "spot_margin"] as const, "category", "place_trade"),
             orderType: a.orderType as "Market" | "Limit" | undefined,
             price: a.price as number | undefined,
             leverage: a.leverage as number | undefined,
@@ -554,7 +826,7 @@ function createServer(
             triggerBy: a.triggerBy as "LastPrice" | "MarkPrice" | "IndexPrice" | undefined,
             triggerDirection: a.triggerDirection as 1 | 2 | undefined,
             notes: a.notes as string | undefined,
-            dry_run: a.dry_run as boolean | undefined,
+            dry_run: assertBooleanFlag(a.dry_run, "dry_run", "place_trade"),
             confirm: a.confirm as string | undefined,
           });
           result = { ...tradeData, serverTimestamp: new Date().toISOString() };
@@ -564,13 +836,14 @@ function createServer(
         case "close_position":
           result = await handleClosePosition(client, {
             symbol: a.symbol as string,
-            side: a.side as "Buy" | "Sell",
+            side: assertOneOf(a.side, ["Buy", "Sell"] as const, "side", "close_position") as "Buy" | "Sell",
             category: a.category as "linear" | "inverse" | "spot" | "spot_margin" | undefined,
             percent: a.percent as number | undefined,
             qty: a.qty as number | undefined,
             orderType: a.orderType as "Market" | "Limit" | undefined,
             price: a.price as number | undefined,
             notes: a.notes as string | undefined,
+            dry_run: assertBooleanFlag(a.dry_run, "dry_run", "close_position"),
             confirm: a.confirm as string | undefined,
           });
           break;
@@ -578,10 +851,11 @@ function createServer(
         case "manage_position":
           result = await handleManagePosition(client, {
             symbol: a.symbol as string,
-            side: a.side as "Buy" | "Sell",
-            category: a.category as "linear" | "inverse" | undefined,
+            side: assertOneOf(a.side, ["Buy", "Sell"] as const, "side", "manage_position") as "Buy" | "Sell",
+            category: assertOneOf(a.category, ["linear", "inverse"] as const, "category", "manage_position"),
             updates: a.updates as { sl?: number; tp?: number; trailingStop?: number; trailingActivatePrice?: number },
             notes: a.notes as string | undefined,
+            dry_run: assertBooleanFlag(a.dry_run, "dry_run", "manage_position"),
             confirm: a.confirm as string | undefined,
           });
           break;
@@ -598,7 +872,9 @@ function createServer(
           result = await handleCancelOrder(client, {
             symbol: a.symbol as string,
             orderId: a.orderId as string,
-            category: a.category as "linear" | "inverse" | "spot" | "option" | undefined,
+            category: assertOneOf(a.category, ["linear", "inverse", "spot", "option"] as const, "category", "cancel_order"),
+            orderFilter: assertOneOf(a.orderFilter, ["Order", "StopOrder", "tpslOrder"] as const, "orderFilter", "cancel_order"),
+            dry_run: assertBooleanFlag(a.dry_run, "dry_run", "cancel_order"),
             confirm: a.confirm as string | undefined,
           });
           break;
@@ -660,6 +936,7 @@ function createServer(
         }
 
         case "get_option_payoff": {
+          if (!ENABLE_OPTIONS) throw new Error("Options module not enabled");
           const data = handleGetOptionPayoff({
             legs: a.legs as Array<{ symbol: string; side: "Buy" | "Sell"; qty: number; premium: number }>,
             currentSpot: a.currentSpot as number,
@@ -674,12 +951,12 @@ function createServer(
           if (!ENABLE_OPTIONS) throw new Error("Options module not enabled");
           const data = await handlePlaceOptionTrade(client, {
             symbol: a.symbol as string,
-            side: a.side as "Buy" | "Sell",
+            side: assertOneOf(a.side, ["Buy", "Sell"] as const, "side", "place_option_trade") as "Buy" | "Sell",
             qty: a.qty as number,
             orderType: a.orderType as "Market" | "Limit",
             price: a.price as number | undefined,
             notes: a.notes as string | undefined,
-            dry_run: a.dry_run as boolean | undefined,
+            dry_run: assertBooleanFlag(a.dry_run, "dry_run", "place_option_trade"),
             confirm: a.confirm as string | undefined,
           });
           result = data;
@@ -694,7 +971,7 @@ function createServer(
             orderType: a.orderType as "Market" | "Limit",
             price: a.price as number | undefined,
             notes: a.notes as string | undefined,
-            dry_run: a.dry_run as boolean | undefined,
+            dry_run: assertBooleanFlag(a.dry_run, "dry_run", "close_option_position"),
             confirm: a.confirm as string | undefined,
           });
           result = data;
@@ -799,7 +1076,7 @@ function createServer(
             anonymous: a.anonymous as boolean | undefined,
             strategyType: a.strategyType as string | undefined,
             estimatedNotionalUsd: a.estimatedNotionalUsd as number | undefined,
-            dry_run: a.dry_run as boolean | undefined,
+            dry_run: assertBooleanFlag(a.dry_run, "dry_run", "create_rfq"),
             confirm: a.confirm as string | undefined,
           });
           break;
@@ -810,8 +1087,8 @@ function createServer(
           result = await handleExecuteQuote(client, {
             rfqId: a.rfqId as string,
             quoteId: a.quoteId as string,
-            quoteSide: a.quoteSide as RfqSide,
-            dry_run: a.dry_run as boolean | undefined,
+            quoteSide: assertOneOf(a.quoteSide, ["buy", "sell"] as const, "quoteSide", "execute_quote") as RfqSide,
+            dry_run: assertBooleanFlag(a.dry_run, "dry_run", "execute_quote"),
             confirm: a.confirm as string | undefined,
           });
           break;
@@ -854,14 +1131,14 @@ if (require.main === module) {
     console.error("BYBIT_API_KEY and BYBIT_API_SECRET environment variables are required");
     process.exit(1);
   }
-  const enableOptions = process.env.ENABLE_OPTIONS === "true";
-  const enableRfq = process.env.ENABLE_RFQ === "true";
+  const enableOptions = isEnvEnabled(process.env.ENABLE_OPTIONS);
+  const enableRfq = isEnvEnabled(process.env.ENABLE_RFQ);
   const server = createServer(apiKey, apiSecret, enableOptions, enableRfq);
 
   async function main() {
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    const isTestnet = process.env.BYBIT_TESTNET !== "false";
+    const isTestnet = resolveBaseUrl(process.env.BYBIT_TESTNET) === TESTNET_URL;
     if (isTestnet) {
       console.error("[bybit-quant] Connecting to Bybit TESTNET (api-testnet.bybit.com)");
     } else {

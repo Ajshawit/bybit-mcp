@@ -1,7 +1,7 @@
 import { BybitClient } from "../../client";
 import { assertRfqEligible, checkRfqEligibility } from "./eligibility";
 import { assessComboRisk } from "./risk";
-import { handleGetQuoteRealtime } from "./query";
+import { handleGetQuoteRealtime, handleGetRfqRealtime } from "./query";
 import { OptionTickersResult } from "../options/types";
 import { assertConfirm } from "../confirm";
 import {
@@ -233,7 +233,9 @@ export async function handleExecuteQuote(
     return {
       dryRun: true,
       action: "execute_quote",
-      wouldSubmit: true,
+      // Honest preview: submission also needs the kill-switch on and a live
+      // quote — never advertise wouldSubmit:true when the live path would refuse.
+      wouldSubmit: writesEnabled() && quote !== undefined,
       ...(quote ? { quote } : {}),
       warnings,
       request: body,
@@ -242,9 +244,73 @@ export async function handleExecuteQuote(
   }
 
   // --- Live submission path ---
+  // Same layered pre-flights as create_rfq (eligibility + combo-risk), plus a
+  // liveness check on the quote itself. Executing fills IRREVERSIBLY.
   if (!writesEnabled()) throw new Error(WRITES_DISABLED_MSG);
+  await assertRfqEligible(client);
+
+  const live = await handleGetQuoteRealtime(client, { rfqId: params.rfqId, quoteId: params.quoteId });
+  const quote = (live.list ?? []).find((q) => q.quoteId === params.quoteId);
+  if (!quote) {
+    throw new Error(
+      `No live quote ${params.quoteId} on rfqId ${params.rfqId} — expired, cancelled, or already filled. Refusing to execute blind.`
+    );
+  }
+  const quoteLegs = params.quoteSide === "buy" ? quote.quoteBuyList : quote.quoteSellList;
+  if (!quoteLegs || quoteLegs.length === 0) {
+    throw new Error(
+      `Quote ${params.quoteId} has no ${params.quoteSide}-side prices — quoteSide may be inverted relative to the LP quote. Refusing to execute.`
+    );
+  }
+
+  // Risk-gate the book the taker would END UP with: the RFQ legs as created
+  // when buying the structure, with every side inverted when hitting the
+  // LP's sell side. Leg prices come from the quote being executed.
+  const rfqLive = await handleGetRfqRealtime(client, { rfqId: params.rfqId });
+  const rfq = (rfqLive.list ?? []).find((r) => r.rfqId === params.rfqId) ?? (rfqLive.list ?? [])[0];
+  if (!rfq || !rfq.legs || rfq.legs.length === 0) {
+    throw new Error(
+      `Could not fetch the RFQ ${params.rfqId} structure to assess combo risk. Refusing to execute.`
+    );
+  }
+  const priceBySymbol = new Map(quoteLegs.map((l) => [l.symbol, parseFloat(l.price)]));
+  const invert = params.quoteSide === "sell";
+  const riskLegs: RiskLeg[] = rfq.legs.map((l) => {
+    const price = priceBySymbol.get(l.symbol);
+    return {
+      category: toRiskLegCategory(l.category),
+      symbol: l.symbol,
+      side: invert ? (l.side === "buy" ? "sell" : "buy") : l.side,
+      qty: Number(l.qty),
+      ...(price !== undefined && Number.isFinite(price) && price > 0 ? { price } : {}),
+    };
+  });
+  const currentSpot = await fetchOptionSpot(client, riskLegs);
+  const risk = assessComboRisk({ legs: riskLegs, currentSpot });
+  if (!risk.allowed) {
+    throw new Error(`Combo risk gate blocked execute_quote:\n- ${risk.reasons.join("\n- ")}`);
+  }
+
   const res = await client.signedPost<Omit<ExecuteQuoteResult, "serverTimestamp">>(PATHS.execute, body);
   return { ...res, serverTimestamp: new Date().toISOString() };
+}
+
+// Underlying spot for the combo-risk gate, from the first option leg's
+// ticker. Returns undefined on any failure — assessComboRisk then fails safe
+// (unmodeled → uncovered → blocked), never trades on a missing spot.
+async function fetchOptionSpot(client: BybitClient, legs: RiskLeg[]): Promise<number | undefined> {
+  const optionLeg = legs.find((l) => l.category === "option");
+  if (!optionLeg) return undefined;
+  try {
+    const res = await client.publicGet<OptionTickersResult>("/v5/market/tickers", {
+      category: "option",
+      symbol: optionLeg.symbol,
+    });
+    const spot = parseFloat(res.list?.[0]?.underlyingPrice ?? "");
+    return Number.isFinite(spot) && spot > 0 ? spot : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function handleCancelRfq(

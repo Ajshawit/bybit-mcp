@@ -75,8 +75,17 @@ function mapPositions(list: PositionListResult["list"]): AccountPosition[] {
 function mapOptionPositions(list: BybitOptionPosition[]): OptionPosition[] {
   return list
     .filter((pos) => pos.side !== "None" && parseFloat(pos.size) > 0)
-    .map((pos) => {
-      const parsed = parseOptionSymbol(pos.symbol);
+    .flatMap((pos) => {
+      // One unparseable symbol must never take down the whole account
+      // snapshot — skip it (with a stderr warning; stdout is the MCP
+      // transport) and keep every other position visible.
+      let parsed: ReturnType<typeof parseOptionSymbol>;
+      try {
+        parsed = parseOptionSymbol(pos.symbol);
+      } catch {
+        console.error(`[bybit-quant] Skipping option position with unparseable symbol: ${pos.symbol}`);
+        return [];
+      }
       const multiplier = OPTION_MULTIPLIERS[parsed.underlying] ?? 1;
       const side: "Long" | "Short" = pos.side === "Buy" ? "Long" : "Short";
       const qty = parseFloat(pos.size);
@@ -130,7 +139,9 @@ export async function handleGetAccountStatus(
   const [walletRes, linearRes, inverseRes, optionRes, queryApiRes] = await Promise.all([
     client.signedGet<WalletBalanceResult>("/v5/account/wallet-balance", { accountType: "UNIFIED" }),
     client.signedGet<PositionListResult>("/v5/position/list", { category: "linear", settleCoin: "USDT" }),
-    client.signedGet<PositionListResult>("/v5/position/list", { category: "inverse", settleCoin: "USD" }),
+    // No settleCoin filter: inverse contracts settle in their base coin
+    // (BTC, ETH, …), so settleCoin:"USD" filtered out every real position.
+    client.signedGet<PositionListResult>("/v5/position/list", { category: "inverse" }),
     includeOptions
       ? client.signedGet<OptionPositionListResult>("/v5/position/list", { category: "option" })
       : Promise.resolve({ list: [] as BybitOptionPosition[] }),

@@ -8,6 +8,7 @@ import {
   TradfiInstrumentListResult,
   TradfiInstrument,
   TradfiInstrumentsResult,
+  AccountRatioResult,
 } from "./types";
 import { concurrentMap, isNyseOpen, NyseStatus } from "../util";
 
@@ -58,10 +59,24 @@ export interface CrowdedPositioningResult {
   fundingRateAnnualized: number;
   funding8hAgo: number | null;
   funding24hAgo: number | null;
+  fundingZScore: number | null;   // current funding vs its trailing history (~200 epochs)
   rangePosition: number;
   price24hPct: number;
   volume24hUsd: number;
   reading: "crowded_long" | "crowded_short";
+}
+
+export interface AccountRatioScanResult {
+  symbol: string;
+  price: number;
+  longShortRatio: number;              // accounts long / accounts short
+  longAccountPct: number;              // % of accounts long
+  longShortRatio24hAgo: number | null;
+  fundingRate: number;
+  fundingZScore: number | null;
+  price24hPct: number;
+  volume24hUsd: number;
+  reading: "retail_crowded_long" | "retail_crowded_short";
 }
 
 export interface VolumeSpikeResult {
@@ -410,10 +425,30 @@ export async function handleGetMarketRegime(
   };
 }
 
-export type ScanFilter = "oi_divergence" | "crowded_positioning" | "volume_spike";
+export type ScanFilter = "oi_divergence" | "crowded_positioning" | "volume_spike" | "account_ratio";
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
 const ri = (v: number) => Math.round(v);
+
+// Funding z-score needs enough history for a stable baseline. 200 records is
+// Bybit's max (~66 days at 8h funding, ~8 days at 1h).
+const FUNDING_HISTORY_LIMIT = "200";
+const MIN_FUNDING_Z_SAMPLES = 20;
+
+/**
+ * Z-score of `current` against a trailing funding-rate history (sample std).
+ * Null when the history is too short or has no variance.
+ */
+export function fundingZScore(history: number[], current: number): number | null {
+  if (history.length < MIN_FUNDING_Z_SAMPLES) return null;
+  const mean = history.reduce((s, v) => s + v, 0) / history.length;
+  const ss = history.reduce((s, v) => s + (v - mean) * (v - mean), 0);
+  const std = Math.sqrt(ss / (history.length - 1));
+  // A float-noise std (constant history that doesn't sum exactly) would
+  // produce an astronomically large, meaningless z-score.
+  if (!(std > 1e-12)) return null;
+  return (current - mean) / std;
+}
 
 export async function handleScanMarket(
   client: BybitClient,
@@ -428,6 +463,12 @@ export async function handleScanMarket(
       return scanCrowdedPositioning(client, minVolume24hUsd, limit);
     case "volume_spike":
       return scanVolumeSpike(client, minVolume24hUsd, limit);
+    case "account_ratio":
+      return scanAccountRatio(client, minVolume24hUsd, limit);
+    default:
+      // MCP arguments are not validated server-side — an unknown filter must
+      // fail loudly, not return undefined.
+      throw new Error(`scan_market: unknown filter '${String(filter)}'`);
   }
 }
 
@@ -459,6 +500,8 @@ async function scanOiDivergence(
       const oiNow = parseFloat(ois[0].openInterest);
       const oi4hAgo = parseFloat(ois[1].openInterest);
       const oi24hAgo = parseFloat(ois[6].openInterest);
+      // A zero/NaN prior OI would produce ±Infinity/NaN percentages.
+      if (!(oi4hAgo > 0) || !(oi24hAgo > 0)) return null;
 
       const oi4hPct = (oiNow - oi4hAgo) / oi4hAgo * 100;
       const oi24hPct = (oiNow - oi24hAgo) / oi24hAgo * 100;
@@ -483,14 +526,17 @@ async function scanOiDivergence(
         else reading = "oi_divergence";
       } else return null;
 
+      // Rolling 4h change on 1h bars: current price vs the close 4 hours ago.
+      // (Two 240-bars measured "since the last 4h candle boundary" — a 0-4h
+      // window mislabeled as 4h.)
       const klineRes = await client.publicGet<KlineResult>("/v5/market/kline", {
         category: "linear",
         symbol: t.symbol,
-        interval: "240",
-        limit: "2",
+        interval: "60",
+        limit: "5",
       });
-      const price4hPct = klineRes.list.length >= 2
-        ? (parseFloat(klineRes.list[0][4]) - parseFloat(klineRes.list[1][4])) / parseFloat(klineRes.list[1][4]) * 100
+      const price4hPct = klineRes.list.length >= 5
+        ? (parseFloat(klineRes.list[0][4]) - parseFloat(klineRes.list[4][4])) / parseFloat(klineRes.list[4][4]) * 100
         : 0;
 
       return {
@@ -546,24 +592,38 @@ async function scanCrowdedPositioning(
       const fundingRes = await client.publicGet<FundingHistoryResult>("/v5/market/funding/history", {
         category: "linear",
         symbol: t.symbol,
-        limit: "4",
+        limit: FUNDING_HISTORY_LIMIT,
       });
 
       const fl = fundingRes.list ?? [];
+      // Funding interval varies per symbol (1h/2h/4h/8h) — derive it from the
+      // history timestamps instead of hardcoding 3 epochs/day.
+      const intervalMs = fl.length >= 2
+        ? Math.abs(parseInt(fl[0].fundingRateTimestamp, 10) - parseInt(fl[1].fundingRateTimestamp, 10))
+        : 8 * 3600000;
+      const epochsPerDay = intervalMs > 0 ? 86400000 / intervalMs : 3;
+      const idx8h = intervalMs > 0 ? Math.round((8 * 3600000) / intervalMs) : 1;
+      const idx24h = intervalMs > 0 ? Math.round((24 * 3600000) / intervalMs) : 3;
       const funding = parseFloat(t.fundingRate);
       const price = parseFloat(t.lastPrice);
       const high = parseFloat(t.highPrice24h);
       const low = parseFloat(t.lowPrice24h);
       const rangePos = (price - low) / (high - low);
       const reading: "crowded_long" | "crowded_short" = funding > 0 ? "crowded_long" : "crowded_short";
+      // fl[0] is the latest settled rate, typically equal to the ticker's
+      // current rate — keeping it in the baseline would let the measured
+      // value bias its own mean/std (self-inclusion).
+      const historyRates = fl.slice(1).map((f) => parseFloat(f.fundingRate)).filter(Number.isFinite);
+      const zScore = fundingZScore(historyRates, funding);
 
       return {
         symbol: t.symbol,
         price: ri(price),
         fundingRate: funding,
-        fundingRateAnnualized: r2(funding * 3 * 365 * 100),
-        funding8hAgo: fl[1] ? parseFloat(fl[1].fundingRate) : null,
-        funding24hAgo: fl[3] ? parseFloat(fl[3].fundingRate) : null,
+        fundingRateAnnualized: r2(funding * epochsPerDay * 365 * 100),
+        funding8hAgo: fl[idx8h] ? parseFloat(fl[idx8h].fundingRate) : null,
+        funding24hAgo: fl[idx24h] ? parseFloat(fl[idx24h].fundingRate) : null,
+        fundingZScore: zScore !== null ? r2(zScore) : null,
         rangePosition: r2(rangePos),
         price24hPct: r2(parseFloat(t.price24hPcnt) * 100),
         volume24hUsd: ri(parseFloat(t.turnover24h)),
@@ -639,6 +699,86 @@ async function scanVolumeSpike(
 
   return results
     .filter((r): r is VolumeSpikeResult => r !== null)
+    .slice(0, limit);
+}
+
+// Long/short account-ratio extremes (retail crowding). A reading >= 2 means
+// twice as many accounts are long as short — contrarian-bearish when paired
+// with stretched funding; <= 0.5 is the mirror.
+const ACCOUNT_RATIO_EXTREME_LONG = 2.0;
+const ACCOUNT_RATIO_EXTREME_SHORT = 0.5;
+const ACCOUNT_RATIO_UNIVERSE = 100;     // top-volume symbols probed per scan
+const ACCOUNT_RATIO_PERIOD = "1h";
+const ACCOUNT_RATIO_LOOKBACK = "25";    // 25 hourly records → current + 24h-ago
+
+function longShortFromRecord(rec: { buyRatio: string; sellRatio: string } | undefined): number | null {
+  if (!rec) return null;
+  const buy = parseFloat(rec.buyRatio);
+  const sell = parseFloat(rec.sellRatio);
+  if (!(buy >= 0) || !(sell > 0)) return null;
+  return buy / sell;
+}
+
+async function scanAccountRatio(
+  client: BybitClient,
+  minVolume: number,
+  limit: number
+): Promise<AccountRatioScanResult[]> {
+  const tickersRes = await client.publicGet<TickersResult>("/v5/market/tickers", { category: "linear" });
+
+  const universe = (tickersRes.list ?? [])
+    .filter((t) => parseFloat(t.turnover24h) >= minVolume)
+    .sort((a, b) => parseFloat(b.turnover24h) - parseFloat(a.turnover24h))
+    .slice(0, ACCOUNT_RATIO_UNIVERSE);
+
+  const results = await concurrentMap(universe, 10, async (t) => {
+    try {
+      const ratioRes = await client.publicGet<AccountRatioResult>("/v5/market/account-ratio", {
+        category: "linear",
+        symbol: t.symbol,
+        period: ACCOUNT_RATIO_PERIOD,
+        limit: ACCOUNT_RATIO_LOOKBACK,
+      });
+      const rl = ratioRes.list ?? [];
+      const ratio = longShortFromRecord(rl[0]);
+      if (ratio === null) return null;
+      if (ratio < ACCOUNT_RATIO_EXTREME_LONG && ratio > ACCOUNT_RATIO_EXTREME_SHORT) return null;
+
+      // Funding z-score only for symbols past the gate — keeps the scan at
+      // one extra call per hit instead of per candidate.
+      const fundingRes = await client.publicGet<FundingHistoryResult>("/v5/market/funding/history", {
+        category: "linear",
+        symbol: t.symbol,
+        limit: FUNDING_HISTORY_LIMIT,
+      });
+      // Exclude the latest settled record from the baseline — see the
+      // self-inclusion note in scanCrowdedPositioning.
+      const rates = (fundingRes.list ?? []).slice(1).map((f) => parseFloat(f.fundingRate)).filter(Number.isFinite);
+      const fundingRate = parseFloat(t.fundingRate);
+      const zScore = fundingZScore(rates, fundingRate);
+      const prevRatio = longShortFromRecord(rl[24]);
+
+      return {
+        symbol: t.symbol,
+        price: ri(parseFloat(t.lastPrice)),
+        longShortRatio: r2(ratio),
+        longAccountPct: r2(parseFloat(rl[0].buyRatio) * 100),
+        longShortRatio24hAgo: prevRatio !== null ? r2(prevRatio) : null,
+        fundingRate,
+        fundingZScore: zScore !== null ? r2(zScore) : null,
+        price24hPct: r2(parseFloat(t.price24hPcnt) * 100),
+        volume24hUsd: ri(parseFloat(t.turnover24h)),
+        reading: ratio >= ACCOUNT_RATIO_EXTREME_LONG ? "retail_crowded_long" as const : "retail_crowded_short" as const,
+      } as AccountRatioScanResult;
+    } catch {
+      return null;
+    }
+  });
+
+  const extremity = (ratio: number) => (ratio >= 1 ? ratio : 1 / ratio);
+  return results
+    .filter((r): r is AccountRatioScanResult => r !== null)
+    .sort((a, b) => extremity(b.longShortRatio) - extremity(a.longShortRatio))
     .slice(0, limit);
 }
 

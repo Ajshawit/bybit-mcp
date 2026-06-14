@@ -45,10 +45,16 @@ export function assessComboRisk(params: AssessComboRiskParams): ComboRiskResult 
   const legs = params.legs.map((l) => ({ ...l, side: normalizeSide(l.side) }));
 
   const allOptions = legs.every((l) => l.category === "option");
-  const hasShort = legs.some((l) => l.side === "sell");
   const everyOptionPriced = legs.every((l) => l.price !== undefined && l.price > 0);
 
   // --- Unmodelable cases: fail safe, never fabricate a number ---
+  const badQty = legs.find((l) => !Number.isFinite(l.qty) || l.qty <= 0);
+  if (badQty) {
+    reasons.push(
+      `Leg ${badQty.symbol} has invalid qty ${badQty.qty}; cannot assess risk. Treated as uncovered.`
+    );
+    return failSafeUnmodeled(reasons);
+  }
   if (!allOptions) {
     reasons.push(
       "Combo contains linear/spot legs; option payoff math cannot bound its loss. Treated as uncovered."
@@ -64,29 +70,38 @@ export function assessComboRisk(params: AssessComboRiskParams): ComboRiskResult 
     return failSafeUnmodeled(reasons);
   }
 
-  // --- Modelable: reuse payoff.ts unchanged ---
-  const payoff = handleGetOptionPayoff({
-    legs: legs.map((l) => ({
-      symbol: l.symbol,
-      side: l.side === "buy" ? "Buy" : "Sell",
-      qty: l.qty,
-      premium: l.price as number,
-    })),
-    currentSpot,
-  });
-  const { maxLoss, maxProfit, breakevens, cappedAtRange } = payoff.summary;
+  // --- Modelable: reuse payoff.ts (analytic — exact kinks and tail slopes) ---
+  let payoff;
+  try {
+    payoff = handleGetOptionPayoff({
+      legs: legs.map((l) => ({
+        symbol: l.symbol,
+        side: l.side === "buy" ? "Buy" : "Sell",
+        qty: l.qty,
+        premium: l.price as number,
+      })),
+      currentSpot,
+    });
+  } catch (err: unknown) {
+    // e.g. mixed underlyings (no single price axis) or a malformed symbol.
+    const msg = err instanceof Error ? err.message : String(err);
+    reasons.push(`Payoff engine refused the combo (${msg}). Treated as uncovered.`);
+    return failSafeUnmodeled(reasons);
+  }
+  const { maxLoss, maxProfit, breakevens, uncoveredTailAbove, uncoveredTailBelow } = payoff.summary;
 
-  // Long-only option combos have loss bounded by premium paid — always covered.
-  // With any short leg, `cappedAtRange` means the payoff was still moving at
-  // the ±30% boundary (e.g. naked short call/put → unbounded tail): treat as
-  // uncovered. A short leg whose payoff is flat at both ends is a risk-defined
-  // spread and is correctly NOT flagged.
-  const uncovered = hasShort && cappedAtRange === true;
+  // Net-short tail beyond the outermost strike on EITHER side means the combo
+  // is not risk-defined. Computed analytically, so naked short puts and legs
+  // with strikes outside any price window are caught — the old grid-slope
+  // check missed both (June 2026 audit, CRITICAL). Long-only combos and
+  // risk-defined spreads have flat or non-negative tails and pass.
+  const uncovered = uncoveredTailAbove === true || uncoveredTailBelow === true;
 
-  if (uncovered) {
-    reasons.push(
-      "Net-short combo with loss not provably bounded (payoff still trending at ±30% range)."
-    );
+  if (uncoveredTailAbove) {
+    reasons.push("Net-short call tail: loss unbounded above the highest strike — no numeric max-loss exists.");
+  }
+  if (uncoveredTailBelow) {
+    reasons.push("Net-short put tail: loss grows all the way to price 0 below the lowest strike.");
   }
 
   const allowed = !uncovered || overrideEnabled();
@@ -98,7 +113,9 @@ export function assessComboRisk(params: AssessComboRiskParams): ComboRiskResult 
 
   return {
     modeled: true,
-    maxLossUsd: maxLoss,
+    // Exact when numeric (evaluated at S=0 and every strike); null when the
+    // loss is unbounded — a fake bound on a money gate is worse than "unknown".
+    maxLossUsd: maxLoss === "unlimited" ? null : maxLoss,
     maxProfit,
     breakevens,
     uncovered,

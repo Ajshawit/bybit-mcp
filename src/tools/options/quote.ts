@@ -49,7 +49,10 @@ export async function handleGetOptionQuote(
 
   let greeksLocal: OptionQuoteResult["greeksLocal"];
   if (computeGreeksLocal) {
-    const T = daysToExpiry / 365;
+    // Exact fractional time to expiry — the integer (ceil'd) daysToExpiry is
+    // for display only; quantizing T up to a whole day badly distorts local
+    // greeks near expiry.
+    const T = Math.max(0, parsed.expiry.getTime() - now) / 86400000 / 365;
     const local = blackScholesGreeks(parsed.type, underlyingPrice, parsed.strike, T, parseFloat(t.markIv));
     const absDiff5pct = (a: number, b: number) => Math.abs(b) > 0 && Math.abs(a - b) > Math.abs(b) * 0.05;
     if (

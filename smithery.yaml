@@ -30,7 +30,7 @@ startCommand:
         title: Enable Options Tools
         description: >
           Enable the 4 options tools (options_market, get_option_payoff,
-          place_option_trade, close_option_position). Options settle in USDC.
+          place_option_trade, close_option_position). Options are USDT-settled.
         default: false
       optionsAllowNakedShort:
         type: boolean
@@ -42,11 +42,34 @@ startCommand:
         default: false
       optionsMaxPremiumPctBalance:
         type: number
-        title: Max Option Premium (% of USDC balance)
+        title: Max Option Premium (% of USDT balance)
         description: >
-          Block option buys where premium exceeds N% of USDC balance. Leave empty to disable.
+          Block option buys where premium exceeds N% of USDT balance. Leave empty to disable.
         minimum: 0
         maximum: 100
+      enableRfq:
+        type: boolean
+        title: Enable RFQ Block-Trade Tools
+        description: >
+          Enable the 6 RFQ block-trade tools (rfq_query, check_rfq_eligibility,
+          assess_combo_risk, create_rfq, execute_quote, cancel_rfq). Read-only and
+          dry-run until the write kill-switch below is also enabled.
+        default: false
+      rfqEnableWrites:
+        type: boolean
+        title: Enable Live RFQ Submission (kill-switch)
+        description: >
+          While false, create_rfq/execute_quote are dry-run only even with
+          dry_run=false. Keep false until RFQ endpoint paths are confirmed against
+          a live RFQ-eligible account.
+        default: false
+      rfqAllowUncovered:
+        type: boolean
+        title: Allow Uncovered RFQ Combos
+        description: >
+          Allow combos the risk engine cannot prove are risk-defined (uncovered
+          net-short or unmodelable legs). Leave false unless you have explicit reason.
+        default: false
   commandFunction: |-
     (config) => ({
       command: 'npx',
@@ -57,6 +80,9 @@ startCommand:
         BYBIT_TESTNET: String(config.bybitTestnet ?? true),
         ENABLE_OPTIONS: String(config.enableOptions ?? false),
         OPTIONS_ALLOW_NAKED_SHORT: String(config.optionsAllowNakedShort ?? false),
+        ENABLE_RFQ: String(config.enableRfq ?? false),
+        RFQ_ENABLE_WRITES: String(config.rfqEnableWrites ?? false),
+        RFQ_ALLOW_UNCOVERED: String(config.rfqAllowUncovered ?? false),
         ...(config.optionsMaxPremiumPctBalance !== undefined && {
           OPTIONS_MAX_PREMIUM_PCT_BALANCE: String(config.optionsMaxPremiumPctBalance)
         })

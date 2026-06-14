@@ -32,4 +32,21 @@ describe("buildAuthHeaders", () => {
     const headers = buildAuthHeaders(apiKey, secret, timestamp, recvWindow, body);
     expect(headers["X-BAPI-SIGN"]).toBe(expected);
   });
+
+  // Fixed known-answer vector: the tests above re-derive the HMAC with the
+  // same recipe as the implementation, so a recipe bug (wrong field order,
+  // wrong algorithm) would pass both sides. This hex was computed
+  // independently and pins the exact Bybit V5 signing recipe.
+  it("matches an independently computed known-answer vector", () => {
+    const headers = buildAuthHeaders(
+      "test-key",
+      "test-secret",
+      "1700000000000",
+      "5000",
+      "category=linear"
+    );
+    expect(headers["X-BAPI-SIGN"]).toBe(
+      "85d495c8776cb90e77dfac52d77ea79f2c7b3080ddbca3da7b132ebc23cecfbc"
+    );
+  });
 });

@@ -115,7 +115,7 @@ describe("rfq query handlers", () => {
       const res = await handleGetRfqRealtime(client, { rfqId: "rfq-1" });
 
       const call = (client.signedGet as jest.Mock).mock.calls[0];
-      expect(call[0]).toBe("/v5/rfq/realtime");
+      expect(call[0]).toBe("/v5/rfq/rfq-realtime");
       expect(call[1]).toEqual({ rfqId: "rfq-1" });
       expect(res.list).toHaveLength(1);
     });

@@ -49,4 +49,24 @@ describe("blackScholesGreeks", () => {
     const g = blackScholesGreeks("call", 50000, 50000, 30 / 365, 0.65);
     expect(g.vega).toBeGreaterThan(0);
   });
+
+  // σ→0 / invalid-IV limit: deterministic intrinsic-based greeks, never NaN.
+  it("iv=0 returns the intrinsic limit, not NaN", () => {
+    const itm = blackScholesGreeks("call", 50000, 30000, 30 / 365, 0);
+    expect(itm.delta).toBe(1);
+    expect(itm.gamma).toBe(0);
+    expect(itm.theta).toBe(0);
+    expect(itm.vega).toBe(0);
+
+    const otmPut = blackScholesGreeks("put", 50000, 30000, 30 / 365, 0);
+    expect(otmPut.delta).toBe(0);
+  });
+
+  it("NaN iv returns finite greeks", () => {
+    const g = blackScholesGreeks("call", 50000, 50000, 30 / 365, NaN);
+    expect(Number.isFinite(g.delta)).toBe(true);
+    expect(Number.isFinite(g.gamma)).toBe(true);
+    expect(Number.isFinite(g.theta)).toBe(true);
+    expect(Number.isFinite(g.vega)).toBe(true);
+  });
 });

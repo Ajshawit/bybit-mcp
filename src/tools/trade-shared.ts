@@ -9,6 +9,9 @@ export interface FillSnapshot {
   avgFillPrice: number;
   fillStatus: string;
   cumExecQty: string;
+  // True when avgFillPrice is the pre-trade reference price (lookup failed or
+  // nothing executed yet), not a real fill — callers surface this explicitly.
+  isFallback?: boolean;
 }
 
 // Best-effort lookup of actual fill price after create. Bybit's order/create
@@ -28,12 +31,13 @@ export async function fetchFillSnapshot(
       category, symbol, orderId,
     });
     const o = res.list[0];
-    if (!o) return { avgFillPrice: fallbackPrice, fillStatus: "Unknown", cumExecQty: "0" };
+    if (!o) return { avgFillPrice: fallbackPrice, fillStatus: "Unknown", cumExecQty: "0", isFallback: true };
     const cumExecQty = o.cumExecQty || "0";
-    const avgFillPrice = parseFloat(cumExecQty) > 0 ? parseFloat(o.avgPrice) : fallbackPrice;
-    return { avgFillPrice, fillStatus: o.orderStatus || "Unknown", cumExecQty };
+    const executed = parseFloat(cumExecQty) > 0;
+    const avgFillPrice = executed ? parseFloat(o.avgPrice) : fallbackPrice;
+    return { avgFillPrice, fillStatus: o.orderStatus || "Unknown", cumExecQty, ...(executed ? {} : { isFallback: true }) };
   } catch {
-    return { avgFillPrice: fallbackPrice, fillStatus: "Unknown", cumExecQty: "0" };
+    return { avgFillPrice: fallbackPrice, fillStatus: "Unknown", cumExecQty: "0", isFallback: true };
   }
 }
 
@@ -50,7 +54,10 @@ export async function ensureInstrumentInfo(
     category,
     symbol,
   });
-  const inst = res.list[0];
+  const inst = res.list?.[0];
+  if (!inst) {
+    throw new Error(`No instrument info returned for ${category}:${symbol} — check the symbol/category pairing.`);
+  }
   info = {
     tickSize: inst.priceFilter.tickSize,
     qtyStep: inst.lotSizeFilter.qtyStep ?? inst.lotSizeFilter.basePrecision ?? "0.001",

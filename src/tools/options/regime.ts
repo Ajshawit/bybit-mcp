@@ -8,6 +8,9 @@ export interface OptionsRegimeSignal {
   putCallSkew: number;
   termStructure: "contango" | "backwardation" | "flat";
   sampleAvailable: boolean;
+  // True when the underlying spot fetch failed — ATM/skew fields are then
+  // placeholders, not measurements. Never silently report garbage analytics.
+  spotUnavailable?: boolean;
 }
 
 export interface OptionsRegimeResult {
@@ -18,7 +21,7 @@ const ATM_PCT = 0.10;     // ±10% of spot for ATM IV lookups
 const SKEW_OTM = 0.10;   // target 10% OTM for skew: put at spot*0.9, call at spot*1.1
 
 // Unique expiries from the chain, sorted ascending, DTE >= 0
-function sortedExpiries(
+export function sortedExpiries(
   tickers: OptionTickersResult["list"],
   now: number
 ): Date[] {
@@ -34,7 +37,7 @@ function sortedExpiries(
 }
 
 // Nearest-to-spot call IV for a given expiry
-function atmIvForExpiry(
+export function atmIvForExpiry(
   tickers: OptionTickersResult["list"],
   spot: number,
   expiry: Date
@@ -163,6 +166,20 @@ export async function handleGetOptionsRegime(
     if (list.length === 0) continue;
 
     const spot = spotPrices[i];
+    if (!(spot > 0)) {
+      // Spot fetch failed (the fetch's .catch maps errors to 0). ATM-IV and
+      // skew are strike-vs-spot selections — computing them against spot=0
+      // silently picks the wrong contracts. Flag the signal as degraded.
+      signals[underlying] = {
+        atmIv30d: 0,
+        ivPercentile30d: null,
+        putCallSkew: 0,
+        termStructure: "flat",
+        sampleAvailable: false,
+        spotUnavailable: true,
+      };
+      continue;
+    }
     const expiries = sortedExpiries(list, now);
 
     const iv30d = atmIv30d(list, spot, expiries, 30, now);

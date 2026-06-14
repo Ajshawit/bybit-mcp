@@ -1,5 +1,8 @@
 import { BybitClient } from "../client";
-import { PlaceTradeResult, ClosePositionResult, SpotCloseResult, DryRunResult } from "./types";
+import {
+  PlaceTradeResult, ClosePositionResult, SpotCloseResult, DryRunResult,
+  CloseDryRunResult, SpotCloseDryRunResult,
+} from "./types";
 import { handlePlacePerp, handleClosePerp } from "./trade-perp";
 import { handlePlaceSpot, handleCloseSpot } from "./trade-spot";
 import type { PerpCategory } from "./trade-shared";
@@ -37,6 +40,7 @@ export interface ClosePositionParams {
   orderType?: "Market" | "Limit";
   price?: number;
   notes?: string;
+  dry_run?: boolean;
   confirm?: string;
 }
 
@@ -64,7 +68,7 @@ export async function handlePlaceTrade(
 export async function handleClosePosition(
   client: BybitClient,
   params: ClosePositionParams
-): Promise<ClosePositionResult | SpotCloseResult> {
+): Promise<ClosePositionResult | SpotCloseResult | CloseDryRunResult | SpotCloseDryRunResult> {
   const category = params.category ?? "linear";
 
   if (category === "spot" || category === "spot_margin") {

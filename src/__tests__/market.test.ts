@@ -1,4 +1,4 @@
-import { handleGetMarketData, handleScanMarket, handleGetOhlc, handleGetMarketRegime, handleListTradfiInstruments } from "../tools/market";
+import { handleGetMarketData, handleScanMarket, handleGetOhlc, handleGetMarketRegime, handleListTradfiInstruments, fundingZScore } from "../tools/market";
 import { BybitClient } from "../client";
 
 jest.mock("../client");
@@ -200,7 +200,13 @@ describe("scan_market oi_divergence", () => {
         symbol: "XUSDT", price24hPcnt: "0.05", turnover24h: "50000000",
       }]))
       .mockResolvedValueOnce(shortCoveringOI)
-      .mockResolvedValueOnce({ list: [["0","1.0","1.0","1.0","1.02","0","0"], ["0","1.0","1.0","1.0","1.00","0","0"]] }); // kline for 4h price
+      .mockResolvedValueOnce({ list: [
+        ["0","1.0","1.0","1.0","1.02","0","0"],
+        ["0","1.0","1.0","1.0","1.015","0","0"],
+        ["0","1.0","1.0","1.0","1.01","0","0"],
+        ["0","1.0","1.0","1.0","1.005","0","0"],
+        ["0","1.0","1.0","1.0","1.00","0","0"],
+      ] }); // 1h klines for the rolling 4h price change
 
     const results = await handleScanMarket(client, "oi_divergence", 10_000_000, 15) as any[];
     expect(results).toHaveLength(1);
@@ -214,6 +220,27 @@ describe("scan_market oi_divergence", () => {
       .mockResolvedValueOnce(makeTickerList([{
         symbol: "XUSDT", price24hPcnt: "0.05", turnover24h: "5000000",
       }]));
+
+    const results = await handleScanMarket(client, "oi_divergence", 10_000_000, 15) as any[];
+    expect(results).toHaveLength(0);
+  });
+
+  it("returns null instead of Infinity when prior OI is zero", async () => {
+    const zeroOI = {
+      list: [
+        { openInterest: "950000", timestamp: "1700000000" },
+        { openInterest: "0", timestamp: "1699985600" },
+        { openInterest: "980000", timestamp: "1699971200" },
+        { openInterest: "990000", timestamp: "1699956800" },
+        { openInterest: "995000", timestamp: "1699942400" },
+        { openInterest: "998000", timestamp: "1699928000" },
+        { openInterest: "1000000", timestamp: "1699913600" },
+      ],
+    };
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce(makeTickerList([{ symbol: "XUSDT", price24hPcnt: "0.05", turnover24h: "50000000" }]))
+      .mockResolvedValueOnce(zeroOI);
 
     const results = await handleScanMarket(client, "oi_divergence", 10_000_000, 15) as any[];
     expect(results).toHaveLength(0);
@@ -290,6 +317,183 @@ describe("scan_market crowded_positioning", () => {
 
     const results = await handleScanMarket(client, "crowded_positioning", 10_000_000, 15) as any[];
     expect(results).toHaveLength(0);
+  });
+
+  it("reports a null funding z-score on short history and a real one on long history", async () => {
+    const ticker = { ...crowdedLongTicker, lastPrice: "1.03" };
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce({ list: [ticker] })
+      .mockResolvedValueOnce(fundingHistory); // 4 records < 20-sample minimum
+
+    const short = await handleScanMarket(client, "crowded_positioning", 10_000_000, 15) as any[];
+    expect(short[0].fundingZScore).toBeNull();
+
+    // 21 records; the latest settled record is excluded from the baseline
+    // (self-inclusion), leaving 20 alternating 0.0001/0.0003 (mean 0.0002,
+    // sample std 1e-4·√(20/19)); current funding 0.0006 → z = 4·√(19/20) ≈ 3.90.
+    const longHistory = {
+      list: Array.from({ length: 21 }, (_, i) => ({
+        symbol: "YUSDT",
+        fundingRate: i % 2 === 0 ? "0.0001" : "0.0003",
+        fundingRateTimestamp: String(1700000000000 - i * 8 * 3600000),
+      })),
+    };
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce({ list: [ticker] })
+      .mockResolvedValueOnce(longHistory);
+
+    const long = await handleScanMarket(client, "crowded_positioning", 10_000_000, 15) as any[];
+    expect(long[0].fundingZScore).toBeCloseTo(3.9, 2);
+  });
+});
+
+describe("fundingZScore", () => {
+  const alternating = Array.from({ length: 20 }, (_, i) => (i % 2 === 0 ? 0.0001 : 0.0003));
+
+  it("matches the hand-computed sample z-score", () => {
+    // mean 0.0002, sample std 1e-4·√(20/19) → z = 3·√(19/20)
+    expect(fundingZScore(alternating, 0.0005)).toBeCloseTo(3 * Math.sqrt(19 / 20), 6);
+  });
+
+  it("is null with fewer than 20 samples", () => {
+    expect(fundingZScore(alternating.slice(0, 19), 0.0005)).toBeNull();
+  });
+
+  it("is null when the history has no variance", () => {
+    expect(fundingZScore(Array.from({ length: 20 }, () => 0.0001), 0.0005)).toBeNull();
+  });
+});
+
+describe("scan_market account_ratio", () => {
+  function ratioTicker(symbol: string, fundingRate = "0.0005", turnover = "50000000") {
+    return {
+      symbol,
+      lastPrice: "150",
+      price24hPcnt: "0.02",
+      fundingRate,
+      nextFundingTime: "0",
+      openInterest: "1000",
+      openInterestValue: "150000",
+      volume24h: "1000",
+      turnover24h: turnover,
+      highPrice24h: "155",
+      lowPrice24h: "145",
+      prevPrice24h: "147",
+      bid1Price: "149.9",
+      ask1Price: "150.1",
+    };
+  }
+
+  // 25 hourly records, newest first: index 0 = current, index 24 = 24h ago.
+  function ratioRecords(symbol: string, currentBuy: number, prevBuy = 0.5) {
+    return {
+      list: Array.from({ length: 25 }, (_, i) => {
+        const buy = i === 0 ? currentBuy : i === 24 ? prevBuy : 0.5;
+        return {
+          symbol,
+          buyRatio: String(buy),
+          sellRatio: String(1 - buy),
+          timestamp: String(1700000000000 - i * 3600000),
+        };
+      }),
+    };
+  }
+
+  // 21 records: the latest settled record is dropped from the z-score
+  // baseline (self-inclusion), leaving 20 alternating samples.
+  const altFunding = (symbol: string) => ({
+    list: Array.from({ length: 21 }, (_, i) => ({
+      symbol,
+      fundingRate: i % 2 === 0 ? "0.0001" : "0.0003",
+      fundingRateTimestamp: String(1700000000000 - i * 8 * 3600000),
+    })),
+  });
+
+  function mockRatioApi(
+    client: BybitClient,
+    tickers: unknown[],
+    ratios: Record<string, unknown>,
+    funding: Record<string, unknown> = {}
+  ): void {
+    (client.publicGet as jest.Mock).mockImplementation(async (path: string, params: Record<string, string>) => {
+      if (path === "/v5/market/tickers") return { list: tickers };
+      if (path === "/v5/market/account-ratio") return ratios[params.symbol] ?? { list: [] };
+      if (path === "/v5/market/funding/history") return funding[params.symbol] ?? { list: [] };
+      throw new Error(`Unexpected publicGet: ${path}`);
+    });
+  }
+
+  it("flags retail crowded longs with ratio trend and funding z-score", async () => {
+    const client = new MockClient("k", "s", "u");
+    mockRatioApi(
+      client,
+      [ratioTicker("SOLUSDT")],
+      { SOLUSDT: ratioRecords("SOLUSDT", 0.7) },
+      { SOLUSDT: altFunding("SOLUSDT") }
+    );
+
+    const results = await handleScanMarket(client, "account_ratio", 10_000_000, 15) as any[];
+
+    expect(results).toHaveLength(1);
+    expect(results[0].reading).toBe("retail_crowded_long");
+    expect(results[0].longShortRatio).toBeCloseTo(2.33, 2);
+    expect(results[0].longAccountPct).toBeCloseTo(70, 8);
+    expect(results[0].longShortRatio24hAgo).toBeCloseTo(1, 8);
+    // current funding 0.0005 vs mean 0.0002, std 1e-4·√(20/19) → z ≈ 2.92
+    expect(results[0].fundingZScore).toBeCloseTo(2.92, 2);
+  });
+
+  it("flags retail crowded shorts", async () => {
+    const client = new MockClient("k", "s", "u");
+    mockRatioApi(
+      client,
+      [ratioTicker("DOGEUSDT")],
+      { DOGEUSDT: ratioRecords("DOGEUSDT", 0.3) },
+      { DOGEUSDT: altFunding("DOGEUSDT") }
+    );
+
+    const results = await handleScanMarket(client, "account_ratio", 10_000_000, 15) as any[];
+
+    expect(results).toHaveLength(1);
+    expect(results[0].reading).toBe("retail_crowded_short");
+    expect(results[0].longShortRatio).toBeCloseTo(0.43, 2);
+  });
+
+  it("filters out non-extreme ratios without fetching their funding history", async () => {
+    const client = new MockClient("k", "s", "u");
+    mockRatioApi(client, [ratioTicker("BTCUSDT")], { BTCUSDT: ratioRecords("BTCUSDT", 0.55) });
+
+    const results = await handleScanMarket(client, "account_ratio", 10_000_000, 15) as any[];
+
+    expect(results).toHaveLength(0);
+    const paths = (client.publicGet as jest.Mock).mock.calls.map(([p]) => p);
+    expect(paths).not.toContain("/v5/market/funding/history");
+  });
+
+  it("sorts by extremity and applies the limit", async () => {
+    const client = new MockClient("k", "s", "u");
+    const tickers = [ratioTicker("AUSDT"), ratioTicker("BUSDT")];
+    const ratios = {
+      AUSDT: ratioRecords("AUSDT", 0.72),  // ratio ≈ 2.57
+      BUSDT: ratioRecords("BUSDT", 0.8),   // ratio = 4.0 — more extreme
+    };
+    const funding = { AUSDT: altFunding("AUSDT"), BUSDT: altFunding("BUSDT") };
+
+    mockRatioApi(client, tickers, ratios, funding);
+    const ordered = await handleScanMarket(client, "account_ratio", 10_000_000, 15) as any[];
+    expect(ordered.map((r) => r.symbol)).toEqual(["BUSDT", "AUSDT"]);
+
+    mockRatioApi(client, tickers, ratios, funding);
+    const limited = await handleScanMarket(client, "account_ratio", 10_000_000, 1) as any[];
+    expect(limited).toHaveLength(1);
+    expect(limited[0].symbol).toBe("BUSDT");
+  });
+
+  it("throws on an unknown filter instead of returning undefined", async () => {
+    const client = new MockClient("k", "s", "u");
+    await expect(handleScanMarket(client, "bogus" as any, 10_000_000, 15))
+      .rejects.toThrow("unknown filter");
   });
 });
 

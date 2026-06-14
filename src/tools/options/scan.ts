@@ -1,4 +1,5 @@
 import { BybitClient } from "../../client";
+import { JsonFileStore } from "../../storage";
 import { OptionTickersResult, parseOptionSymbol } from "./types";
 
 const MIN_WARMUP_SAMPLES = 20;
@@ -13,6 +14,21 @@ interface Sample {
 export class IVSampleStore {
   private buckets = new Map<string, Sample[]>();
 
+  // With a JsonFileStore, samples survive restarts — without one, the IV
+  // percentile warmup (20+ samples per bucket) resets every session.
+  constructor(private store: JsonFileStore | null = null) {
+    const persisted = store?.load<Record<string, Sample[]>>();
+    if (!persisted) return;
+    const cutoff = Date.now() - RETENTION_MS;
+    for (const [key, samples] of Object.entries(persisted)) {
+      if (!Array.isArray(samples)) continue;
+      const fresh = samples.filter(
+        (s) => typeof s?.iv === "number" && typeof s?.at === "number" && s.at >= cutoff
+      );
+      if (fresh.length > 0) this.buckets.set(key, fresh.slice(-MAX_SAMPLES_PER_BUCKET));
+    }
+  }
+
   private key(underlying: string, expiryBucket: string): string {
     return `${underlying}:${expiryBucket}`;
   }
@@ -25,6 +41,7 @@ export class IVSampleStore {
     fresh.push({ iv, at: at.getTime() });
     if (fresh.length > MAX_SAMPLES_PER_BUCKET) fresh.shift();
     this.buckets.set(key, fresh);
+    this.store?.scheduleSave(() => Object.fromEntries(this.buckets));
   }
 
   getPercentile(underlying: string, expiryBucket: string, iv: number): number | null {

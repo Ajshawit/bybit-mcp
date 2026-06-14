@@ -659,3 +659,197 @@ describe("handleManagePosition", () => {
     ).rejects.toMatchObject({ message: expect.stringContaining("not supported for spot") });
   });
 });
+
+// Negative tests for the confirm gate itself: deleting assertConfirm from any
+// handler must turn at least one of these red, and a refused call must never
+// reach the network.
+describe("confirm gate wiring (negative)", () => {
+  beforeEach(() => {
+    mockEnsure.mockResolvedValue(mockInst);
+    mockDetect.mockResolvedValue(1);
+    positionModeCache["store"].clear();
+  });
+
+  function networkedClient() {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
+    (client.signedPost as jest.Mock).mockResolvedValue(mockOrderResult);
+    return client;
+  }
+
+  it("handlePlacePerp without confirm rejects before any request", async () => {
+    const client = networkedClient();
+    await expect(
+      handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 30, leverage: 10, sl: 29000 })
+    ).rejects.toThrow(/place_trade requires confirm="CONFIRM"/);
+    expect(client.signedPost).not.toHaveBeenCalled();
+    expect(client.signedGet).not.toHaveBeenCalled();
+  });
+
+  it("handlePlacePerp rejects lowercase 'confirm'", async () => {
+    const client = networkedClient();
+    await expect(
+      handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 30, leverage: 10, sl: 29000, confirm: "confirm" })
+    ).rejects.toThrow(/case-sensitive/);
+    expect(client.signedPost).not.toHaveBeenCalled();
+  });
+
+  it("handleClosePerp without confirm rejects before any request", async () => {
+    const client = networkedClient();
+    await expect(
+      handleClosePerp(client, { symbol: "BTCUSDT", side: "Buy" })
+    ).rejects.toThrow(/close_position requires confirm="CONFIRM"/);
+    expect(client.signedPost).not.toHaveBeenCalled();
+    expect(client.signedGet).not.toHaveBeenCalled();
+  });
+
+  it("handleManagePosition without confirm rejects before any request", async () => {
+    const client = networkedClient();
+    await expect(
+      handleManagePosition(client, { symbol: "BTCUSDT", side: "Buy", updates: { sl: 29000 } })
+    ).rejects.toThrow(/manage_position requires confirm="CONFIRM"/);
+    expect(client.signedPost).not.toHaveBeenCalled();
+  });
+});
+
+describe("close_position dry_run", () => {
+  beforeEach(() => {
+    mockEnsure.mockResolvedValue(mockInst);
+    mockDetect.mockResolvedValue(1);
+    positionModeCache["store"].clear();
+  });
+
+  it("returns a preview without confirm and without submitting", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.signedGet as jest.Mock).mockResolvedValue({ list: [{ size: "0.3", positionIdx: 1 }] });
+    (client.signedPost as jest.Mock).mockResolvedValue(mockOrderResult);
+
+    const result = await handleClosePerp(client, { symbol: "BTCUSDT", side: "Buy", dry_run: true });
+
+    expect((result as { dryRun?: boolean }).dryRun).toBe(true);
+    expect((result as { closeQty: string }).closeQty).toBe("0.300");
+    expect((result as { remainingSize: number }).remainingSize).toBe(0);
+    expect(client.signedPost).not.toHaveBeenCalled();
+  });
+});
+
+describe("manage_position dry_run", () => {
+  beforeEach(() => {
+    mockDetect.mockResolvedValue(1);
+    positionModeCache["store"].clear();
+  });
+
+  it("previews the trading-stop request without submitting", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.signedPost as jest.Mock).mockResolvedValue({});
+
+    const result = await handleManagePosition(client, {
+      symbol: "BTCUSDT", side: "Buy", updates: { sl: 29000, tp: 33000 }, dry_run: true,
+    });
+
+    expect((result as { dryRun?: boolean }).dryRun).toBe(true);
+    expect((result as { requestBody: { stopLoss?: string } }).requestBody.stopLoss).toBe("29000");
+    expect(client.signedPost).not.toHaveBeenCalled();
+  });
+});
+
+describe("balance gate with portfolio-margin wallet fields", () => {
+  beforeEach(() => {
+    mockEnsure.mockResolvedValue(mockInst);
+    mockDetect.mockResolvedValue(1);
+    mockFetchFill.mockResolvedValue({ avgFillPrice: 30000, fillStatus: "Filled", cumExecQty: "0.01" });
+    positionModeCache["store"].clear();
+  });
+
+  // Portfolio-margin accounts return totalPositionIM as "" — pre-fix, the
+  // NaN comparison silently disabled the insufficient-balance gate.
+  const pmWallet = {
+    list: [{
+      accountType: "UNIFIED", totalEquity: "200", totalMaintenanceMargin: "5",
+      coin: [{ coin: "USDT", walletBalance: "200", totalPositionIM: "", unrealisedPnl: "0", equity: "200", locked: "0" }],
+    }],
+  };
+
+  it("still blocks insufficient balance when totalPositionIM is empty", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValue(pmWallet);
+    (client.signedPost as jest.Mock).mockResolvedValue(mockOrderResult);
+
+    await expect(
+      handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 300, leverage: 10, sl: 29000, confirm: "CONFIRM" })
+    ).rejects.toThrow(/Insufficient free capital/);
+    expect(client.signedPost).not.toHaveBeenCalled();
+  });
+
+  it("allows a sufficient order when totalPositionIM is empty (treated as 0)", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValue(pmWallet);
+    (client.signedPost as jest.Mock)
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce(mockOrderResult);
+
+    const result = await handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 30, leverage: 10, sl: 29000, confirm: "CONFIRM" });
+    expect((result as { orderId: string }).orderId).toBe("order123");
+  });
+
+  it("fetches USDC wallet balance for USDC-settled linear contracts (BTCPERP)", async () => {
+    const usdcWallet = {
+      list: [{
+        accountType: "UNIFIED", totalEquity: "200", totalMaintenanceMargin: "5",
+        coin: [{ coin: "USDC", walletBalance: "200", totalPositionIM: "0", unrealisedPnl: "0", equity: "200", locked: "0" }],
+      }],
+    };
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValue(usdcWallet);
+    (client.signedPost as jest.Mock)
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce(mockOrderResult);
+
+    await handlePlacePerp(client, { symbol: "BTCPERP", side: "Buy", margin: 30, leverage: 10, sl: 29000, confirm: "CONFIRM" });
+
+    const getCall = (client.signedGet as jest.Mock).mock.calls[0];
+    expect(getCall[1].coin).toBe("USDC");
+  });
+
+  it("inverse dry_run uses the inverse liquidation approximation, not the linear formula", async () => {
+    const btcWallet = {
+      list: [{
+        accountType: "UNIFIED", totalEquity: "1", totalMaintenanceMargin: "0",
+        coin: [{ coin: "BTC", walletBalance: "1", totalPositionIM: "0", unrealisedPnl: "0", equity: "1", locked: "0" }],
+      }],
+    };
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker); // 30000
+    (client.signedGet as jest.Mock).mockResolvedValue(btcWallet);
+
+    const result = await handlePlacePerp(client, {
+      symbol: "BTCUSD", side: "Buy", margin: 0.01, leverage: 10, sl: 29000,
+      category: "inverse", dry_run: true,
+    });
+
+    // inverse long: liq ≈ entry·lev / (lev + 1 − mmr·lev) = 300000/10.95 = 27397.26
+    expect((result as { estimatedLiqPrice: string }).estimatedLiqPrice).toBe("27397.26");
+  });
+
+  it("throws a clear error when walletBalance itself is non-numeric", async () => {
+    const brokenWallet = {
+      list: [{
+        accountType: "UNIFIED", totalEquity: "200", totalMaintenanceMargin: "5",
+        coin: [{ coin: "USDT", walletBalance: "", totalPositionIM: "", unrealisedPnl: "0", equity: "200", locked: "0" }],
+      }],
+    };
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValue(brokenWallet);
+    (client.signedPost as jest.Mock).mockResolvedValue(mockOrderResult);
+
+    await expect(
+      handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 30, leverage: 10, sl: 29000, confirm: "CONFIRM" })
+    ).rejects.toThrow(/walletBalance/);
+    expect(client.signedPost).not.toHaveBeenCalled();
+  });
+});

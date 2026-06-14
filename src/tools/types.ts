@@ -92,6 +92,19 @@ export interface OIHistoryResult {
   symbol: string;
 }
 
+// /v5/market/account-ratio — long/short account ratio records (newest-first).
+// buyRatio + sellRatio = 1 (fractions of accounts long vs short).
+export interface AccountRatioRecord {
+  symbol: string;
+  buyRatio: string;
+  sellRatio: string;
+  timestamp: string;
+}
+
+export interface AccountRatioResult {
+  list: AccountRatioRecord[];
+}
+
 export interface OrderbookEntry {
   b: [string, string][]; // bids [price, size]
   a: [string, string][]; // asks [price, size]
@@ -145,6 +158,8 @@ export interface PlaceTradeResult {
   // submitted reference price (limit price or last-traded price for market
   // orders); check fillStatus and cumExecQty before journalling.
   avgFillPrice: number;
+  // Set when avgFillPrice is that reference-price fallback, not a real fill.
+  avgFillPriceIsFallback?: true;
   fillStatus: string;
   cumExecQty: string;
   serverTimestamp: string;
@@ -205,6 +220,43 @@ export interface DryRunResult {
   triggerPrice?: string;
   triggerBy?: "LastPrice" | "MarkPrice" | "IndexPrice";
   triggerDirection?: 1 | 2;
+}
+
+export interface CloseDryRunResult {
+  dryRun: true;
+  category: string;
+  symbol: string;
+  positionSide: "Buy" | "Sell";
+  closeSide: "Buy" | "Sell";
+  orderType: "Market" | "Limit";
+  closeQty: string;
+  currentSize: number;
+  remainingSize: number;
+  price?: string;
+  reduceOnly: true;
+  wouldSubmit: boolean;
+  serverTimestamp: string;
+  notes?: string;
+}
+
+export interface SpotCloseDryRunResult {
+  dryRun: true;
+  symbol: string;
+  closeQty: string;
+  availableBalance: number;
+  remainingBalance: number;
+  wouldSubmit: boolean;
+  serverTimestamp: string;
+  notes?: string;
+}
+
+export interface ManageDryRunResult {
+  dryRun: true;
+  symbol: string;
+  requestBody: Record<string, unknown>;
+  wouldSubmit: true;
+  serverTimestamp: string;
+  notes?: string;
 }
 
 // Raw API response type for instruments-info TradFi discovery queries.

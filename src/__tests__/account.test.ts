@@ -66,6 +66,19 @@ describe("handleGetAccountStatus", () => {
     expect(result.inverse_positions[0].side).toBe("SHORT");
   });
 
+  it("queries inverse positions without a settleCoin filter (inverse settles in base coin)", async () => {
+    const client = new MockClient("key", "secret", "url");
+    (client.signedGet as jest.Mock)
+      .mockResolvedValueOnce(mockWalletBalance)
+      .mockResolvedValueOnce(mockLinearPositions)
+      .mockResolvedValueOnce(emptyPositions);
+
+    await handleGetAccountStatus(client);
+
+    const inverseCall = (client.signedGet as jest.Mock).mock.calls[2];
+    expect(inverseCall[1]).toEqual({ category: "inverse" });
+  });
+
   it("always returns inverse_positions as array (empty if none)", async () => {
     const client = new MockClient("key", "secret", "url");
     (client.signedGet as jest.Mock)
@@ -131,5 +144,29 @@ describe("handleGetAccountStatus", () => {
     expect(result.accountInfo).toBeDefined();
     expect(result.accountInfo!.uid).toBe("12345678");
     expect(result.accountInfo!.accountType).toBe("UNIFIED");
+  });
+
+  // One unparseable option symbol must never take down the whole account
+  // snapshot — the operator would lose visibility of every position.
+  it("survives an unparseable option symbol and keeps the other positions", async () => {
+    const optionPositions = {
+      list: [
+        { symbol: "BTC-25APR28-80000-C-USDT", side: "Buy" as const, size: "1", avgPrice: "1000", markPrice: "1100" },
+        { symbol: "BTC-WEIRD-FORMAT", side: "Buy" as const, size: "2", avgPrice: "500", markPrice: "550" },
+      ],
+    };
+    const client = new MockClient("key", "secret", "url");
+    (client.signedGet as jest.Mock)
+      .mockResolvedValueOnce(mockWalletBalance)
+      .mockResolvedValueOnce(mockLinearPositions)
+      .mockResolvedValueOnce(emptyPositions)
+      .mockResolvedValueOnce(optionPositions)
+      .mockResolvedValueOnce({ uid: "12345678", accountType: "UNIFIED" });
+
+    const result = await handleGetAccountStatus(client, true);
+
+    expect(result.positions).toHaveLength(1);
+    expect(result.option_positions).toHaveLength(1);
+    expect(result.option_positions[0].symbol).toBe("BTC-25APR28-80000-C-USDT");
   });
 });

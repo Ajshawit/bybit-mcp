@@ -1,11 +1,12 @@
 import crypto from "crypto";
 import { BybitClient } from "../client";
-import { floorToStep } from "../util";
+import { floorToStep, parseFiniteOr, parseFiniteOrThrow } from "../util";
 import { ensureInstrumentInfo, fetchFillSnapshot } from "./trade-shared";
 import { assertConfirm } from "./confirm";
 import {
   TickersResult, WalletBalanceResult, OrderCreateResult,
   PlaceTradeResult, SpotCloseResult, DryRunResult,
+  SpotCloseDryRunResult,
 } from "./types";
 
 export interface PlaceSpotParams {
@@ -26,15 +27,6 @@ export interface PlaceSpotParams {
   confirm?: string;
 }
 
-function resolveTriggerDirection(
-  explicit: 1 | 2 | undefined,
-  triggerPrice: number,
-  marketPrice: number,
-): 1 | 2 {
-  if (explicit === 1 || explicit === 2) return explicit;
-  return triggerPrice >= marketPrice ? 1 : 2;
-}
-
 // Mirrors the perp helper. See trade-perp.ts for the rationale.
 const TRIGGER_NEAR_MARKET_EPSILON = 0.001;
 
@@ -53,7 +45,7 @@ export async function handlePlaceSpot(
     symbol, side, margin, category,
     orderType = "Market", price: limitPrice,
     sl, tp, trailingStop,
-    triggerPrice, triggerBy = "LastPrice", triggerDirection: explicitDirection,
+    triggerPrice,
     notes, dry_run = false, confirm,
   } = params;
 
@@ -82,12 +74,15 @@ export async function handlePlaceSpot(
     }),
   ]);
 
-  const marketPrice = parseFloat(tickerRes.list[0].lastPrice);
+  const marketPrice = parseFiniteOrThrow(tickerRes.list[0]?.lastPrice, `${symbol} ticker lastPrice`);
   const execPrice = orderType === "Limit" ? limitPrice! : marketPrice;
 
-  const usdtCoin = walletRes.list[0].coin.find((c) => c.coin === "USDT");
+  const usdtCoin = walletRes.list[0]?.coin.find((c) => c.coin === "USDT");
   if (!usdtCoin) throw new Error("USDT coin not found in wallet balance response");
-  const freeUsdt = parseFloat(usdtCoin.walletBalance) - parseFloat(usdtCoin.totalPositionIM);
+  // Portfolio-margin accounts return totalPositionIM as "" — treat as 0;
+  // walletBalance must parse or the balance gate would silently pass on NaN.
+  const freeUsdt = parseFiniteOrThrow(usdtCoin.walletBalance, "USDT walletBalance")
+    - parseFiniteOr(usdtCoin.totalPositionIM, 0);
 
   const rawQtyNum = margin / execPrice;
   const qty = floorToStep(rawQtyNum, inst.qtyStep);
@@ -107,15 +102,19 @@ export async function handlePlaceSpot(
       const w = nearMarketWarning(triggerPrice, marketPrice);
       if (w) warnings.push(w);
     }
+    // Spot conditionals carry only orderFilter+triggerPrice — Bybit defines
+    // triggerBy/triggerDirection for linear & inverse only, so the preview
+    // must not show fields the live order cannot send.
     const triggerFields = triggerPrice != null ? {
       triggerPrice: String(triggerPrice),
-      triggerBy,
-      triggerDirection: resolveTriggerDirection(explicitDirection, triggerPrice, marketPrice),
     } : {};
+    // Notional from the floored qty so the preview matches what submits
+    // (margin overstates it whenever floor-to-step trims the order).
+    const flooredNotional = parseFloat(qty) * execPrice;
     return {
       dryRun: true, category, symbol, side, orderType,
       computedQty: qty, executionPrice: String(execPrice),
-      notional: margin.toFixed(2), marginCoin: "USDT",
+      notional: flooredNotional.toFixed(2), marginCoin: "USDT",
       marginRequired: String(margin), walletBalanceAvailable: freeUsdt.toFixed(2),
       warnings, wouldSubmit: margin <= freeUsdt && parseFloat(qty) > 0,
       serverTimestamp: new Date().toISOString(),
@@ -135,10 +134,11 @@ export async function handlePlaceSpot(
     category: "spot", symbol, side, orderType, qty,
   };
   if (triggerPrice != null) {
+    // Spot conditional = orderFilter + triggerPrice only. triggerBy and
+    // triggerDirection are linear/inverse params — Bybit silently ignores
+    // them on spot, so sending them would only mislead readers of the body.
     orderBody.orderFilter = "StopOrder";
     orderBody.triggerPrice = String(triggerPrice);
-    orderBody.triggerBy = triggerBy;
-    orderBody.triggerDirection = resolveTriggerDirection(explicitDirection, triggerPrice, marketPrice);
   }
   if (orderType === "Limit") {
     orderBody.price = String(limitPrice);
@@ -164,6 +164,7 @@ export async function handlePlaceSpot(
     symbol,
     filledQty: qty,
     avgFillPrice: fill.avgFillPrice,
+    ...(fill.isFallback ? { avgFillPriceIsFallback: true as const } : {}),
     fillStatus: fill.fillStatus,
     cumExecQty: fill.cumExecQty,
     serverTimestamp: new Date().toISOString(),
@@ -183,16 +184,17 @@ export interface CloseSpotParams {
   percent?: number;
   qty?: number;
   notes?: string;
+  dry_run?: boolean;
   confirm?: string;
 }
 
 export async function handleCloseSpot(
   client: BybitClient,
   params: CloseSpotParams
-): Promise<SpotCloseResult> {
-  const { symbol, percent = 100, qty: explicitQty, notes, confirm } = params;
+): Promise<SpotCloseResult | SpotCloseDryRunResult> {
+  const { symbol, percent = 100, qty: explicitQty, notes, dry_run = false, confirm } = params;
 
-  assertConfirm(confirm, false, "close_position");
+  assertConfirm(confirm, dry_run, "close_position");
   // Only supports USDT-quoted spot symbols (e.g. BTCUSDT → BTC). Non-USDT quotes are out of scope.
   const baseCoin = symbol.replace(/USDT$/, "");
 
@@ -222,6 +224,20 @@ export async function handleCloseSpot(
   }
 
   const remaining = available - parseFloat(closeQty);
+
+  if (dry_run) {
+    return {
+      dryRun: true,
+      symbol,
+      closeQty,
+      availableBalance: available,
+      remainingBalance: remaining,
+      wouldSubmit: parseFloat(closeQty) > 0,
+      serverTimestamp: new Date().toISOString(),
+      notes,
+    };
+  }
+
   const nonce = crypto.randomBytes(3).toString("hex");
 
   const orderRes = await client.signedPost<OrderCreateResult>("/v5/order/create", {

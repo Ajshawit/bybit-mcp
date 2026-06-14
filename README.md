@@ -1,11 +1,11 @@
 # Bybit Quant MCP Server
 
-**Bybit V5 trading and market analytics for Claude Desktop, Claude Code, and Cursor.** Linear and inverse perpetuals, spot, options (Greeks, IV scanning), and TradFi (xStocks, stock & commodity perps) — with market regime detection, OI divergence scanning, post-trade journaling, and confirmation-based safety rails.
+**Bybit V5 trading and market analytics for Claude Desktop, Claude Code, and Cursor.** Linear and inverse perpetuals, spot, options (Greeks, IV scanning), and TradFi (xStocks, stock & commodity perps) — with portfolio-level risk and scenario stress testing, realized-vol and carry analytics, pre-trade execution cost estimates, market regime detection, OI divergence scanning, post-trade journaling, and confirmation-based safety rails.
 
 [![npm version](https://img.shields.io/npm/v/ajs-bybit-mcp.svg?color=blue)](https://www.npmjs.com/package/ajs-bybit-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/ajs-bybit-mcp.svg)](https://www.npmjs.com/package/ajs-bybit-mcp)
 [![smithery badge](https://smithery.ai/badge/ajs-bybit-mcp)](https://smithery.ai/server/ajs-bybit-mcp)
-[![tests](https://img.shields.io/badge/tests-325%20passing-brightgreen)](./src)
+[![tests](https://img.shields.io/badge/tests-579%20passing-brightgreen)](./src)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -23,13 +23,14 @@ There are several Bybit MCPs. Most are thin V5 REST wrappers with one tool per e
 | **Multi-leg / block trades** | RFQ taker flow: eligibility pre-flight, combo-risk gate, dry-run default, kill-switched live submit | Not supported |
 | **TradFi** | xStocks (tokenized equities), stock perps, commodity perps, with NYSE-hours awareness | Not supported |
 | **Market analytics** | Regime detection (risk_on / risk_off / choppy), OI divergence scan, crowded positioning scan, volume spike scan | Individual endpoint queries |
+| **Quant analytics** | Portfolio Greeks aggregation + spot×IV scenario stress grid, realized-vol estimators + vol cone + IV−RV spread, basis & funding-carry analytics with predicted funding, pre-trade slippage/fee estimates from 500-level books, event calendar (funding/expiries/deliveries) | Not supported |
 | **Account view** | Single `get_account_status` call: balance, margin in use, unrealised PnL, and all positions across perps, spot, options | Multiple calls for wallet, positions, orders |
 | **Consolidated market data** | `get_market_data` returns price, funding, OI, klines, and top-20 orderbook in one call | One endpoint per data type |
 | **Post-trade review** | `get_closed_trades` returns realised PnL, fees-net PnL, hold duration, leverage used | None |
 | **Execution safety** | Schema-validated `confirm: "CONFIRM"` required on every execution tool + `dry_run` preview on every order | None beyond testnet default |
 | **Options safety** | Naked short blocked by default, partial-short detection, premium % of balance guard | N/A |
 | **Token efficiency** | Compact responses by default: orderbook summary (5 fields) instead of 20-level arrays, rounded numerics, optional chain compact mode | Full arrays, raw floats |
-| **Test coverage** | 325 tests across 25 suites | Usually unstated |
+| **Test coverage** | 579 tests across 35 suites | Usually unstated |
 | **Scope** | Trading decisions | Bybit V5 CRUD |
 
 If you want "what's the price of BTC" and a place-order endpoint, the other Bybit MCPs will do fine. If you want a toolkit for real trading workflow — regime views, positioning scans, options flow, TradFi, safe execution, post-trade journaling — use this one.
@@ -46,7 +47,7 @@ Bybit V5 API for AI agents, with confirmation-based safety rails. Exposes Bybit'
 
 ## Tools
 
-22 tools total: 12 always available, plus 4 options tools gated behind `ENABLE_OPTIONS=true` and 6 RFQ block-trade tools gated behind `ENABLE_RFQ=true`.
+30 tools total: 20 always available, plus 4 options tools gated behind `ENABLE_OPTIONS=true` and 6 RFQ block-trade tools gated behind `ENABLE_RFQ=true`.
 
 ### Account & Market Data
 
@@ -61,7 +62,19 @@ Bybit V5 API for AI agents, with confirmation-based safety rails. Exposes Bybit'
 | Tool | Description |
 |------|-------------|
 | `get_market_regime` | BTC trend (SMA20/SMA50) + aggregate funding sentiment across the top-20 linear perps by volume. Returns a synthesised label — `risk_on` / `risk_off` / `choppy` — plus raw signals. `timeframe`: `intraday`, `swing` (default, 4h, ~1–2 week horizon), or `macro` (daily, ~2–3 month horizon). |
-| `scan_market` | Scan **all** linear perps for one condition: `oi_divergence` (price/OI divergence), `crowded_positioning` (extreme funding + tight range), or `volume_spike` (unusual hourly volume). Returns raw numbers and machine-readable tags. Filterable by `minVolume24hUsd` and `limit`. |
+| `scan_market` | Scan **all** linear perps for one condition: `oi_divergence` (price/OI divergence), `crowded_positioning` (extreme funding + tight range, now with a **funding z-score** vs the trailing ~200-epoch history), `volume_spike` (unusual hourly volume), or `account_ratio` (**retail crowding** — long/short account ratio ≥ 2 or ≤ 0.5, with the 24h-ago ratio and funding z-score; contrarian when crowding and funding stretch together). Returns raw numbers and machine-readable tags. Filterable by `minVolume24hUsd` and `limit`. |
+
+### Quant Analytics
+
+| Tool | Description |
+|------|-------------|
+| `get_portfolio_risk` | Portfolio-level risk in one call: net delta (USD) per underlying across linear perps, inverse perps, and options; aggregated gamma / vega / theta; gross notional, leverage ratio, concentration. Then a **scenario stress grid** — spot shocks (default ±5/10/20%) × IV shocks (default ±10 pts) with options repriced via Black-Scholes — including the worst-case cell. Answers "what does a −20% gap do to the account?" |
+| `get_volatility` | Realized-volatility toolkit for any symbol: three annualized estimators (close-to-close, Parkinson, Yang-Zhang) over a recent window, plus a **vol cone** (current RV vs its own min/p25/median/p75/max across 1d–30d horizons). With options enabled on BTC/ETH/SOL it adds ATM IV from the matching expiry and the **IV−RV spread** — the variance-risk-premium signal for vol buy/sell decisions. |
+| `get_carry_analytics` | Basis & funding carry. `action=basis`: mark-vs-index basis, current + realized funding annualized, **predicted next funding** from the premium index (Bybit's formula), perp-vs-spot basis, dated-futures annualized basis. `action=scan`: every liquid perp ranked by annualized carry — who pays shorts, who pays longs — using each symbol's real funding interval. |
+| `estimate_execution_cost` | Pre-trade cost from deep books (500 levels perps / 200 spot): expected average fill, slippage vs mid (bps), book imbalance, your account's actual taker/maker fees, **all-in cost** (slippage + fees), and the max size executable within a slippage budget. Warns when an order would sweep the whole visible book. |
+| `get_event_calendar` | Upcoming events: next funding time + rate per symbol (defaults to your open positions), option expiry schedule with OI notional by date, dated-futures deliveries, and NYSE session status for TradFi symbols. |
+| `analyze_pair` | Pairs / stat-arb toolkit: any symbol vs a benchmark (default BTC) on aligned klines — log-return **correlation** (full + recent window), **beta / hedge ratio** (incl. benchmark notional per $1k of symbol), pair **log-spread z-score** with `spread_rich` / `spread_cheap` tags at \|z\| ≥ 2, and an AR(1) **mean-reversion half-life** (null when the spread trends). For hedge sizing, alt/BTC divergence, and pair-trade timing. |
+| `calculate_position_size` | Turn a risk budget into an order quantity — advisory math only, no order placed. `method=risk_per_trade`: qty whose loss at your stop equals `riskUsd` (or `riskPctEquity`, default 1%). `method=kelly`: fractional Kelly (default 0.25×) from explicit win/loss stats or recent closed trades. `method=vol_target`: size so the position contributes a target annualized vol on equity. Output is floored to the instrument qty step and includes notional, margin at your leverage, and a **liquidation-distance check** — estimated liq price vs your stop plus the max leverage that keeps liquidation safely beyond it. |
 
 ### Perpetuals & Spot Execution
 
@@ -78,6 +91,7 @@ Bybit V5 API for AI agents, with confirmation-based safety rails. Exposes Bybit'
 | `list_open_orders` | List all resting (unfilled) orders with entry price, size, SL, TP, trailing stop, activation price, fill status, and `orderId`. Optional `symbol` filter; `category` covers linear/inverse/spot/spot_margin/option. |
 | `cancel_order` | Cancel one resting order by `orderId` (look it up via `list_open_orders`). Non-destructive to other orders. |
 | `get_closed_trades` | Realised P&L for recently closed perp positions (linear or inverse): avg entry/exit, `closedPnl`, fees-net P&L, leverage used, hold duration (seconds), and `pnlPct`. For post-trade journaling without reconstructing from account deltas. Bybit retains ~7 days; narrow with `startTime`/`endTime` (ms epoch). |
+| `get_performance_stats` | Closed-trade performance analytics over up to 180 days (chunks Bybit's 7-day closed-PnL windows automatically, cap 1000 trades): win rate, profit factor, expectancy, payoff ratio, largest win/loss, **annualized Sharpe & Sortino** on daily USD PnL (scale-dependent — not comparable to return-based ratios), **max drawdown** on the cumulative PnL curve, per-symbol attribution, long-vs-short breakdown, and hold-time stats. The stats source for `calculate_position_size` `method=kelly`. |
 
 ### TradFi Discovery
 
@@ -96,7 +110,7 @@ Bybit V5 API for AI agents, with confirmation-based safety rails. Exposes Bybit'
 | `place_option_trade` | Place a single-leg option order (BTC/ETH/SOL) with `dry_run` support and naked-short guards. |
 | `close_option_position` | Close an open option position fully or partially, with `dry_run` P&L preview. |
 
-Option premium is charged in **USDC**. USDT is not used for options settlement — ensure USDC balance before placing option trades.
+All option symbols this server trades are **USDT-settled** (`-USDT` suffix) — premium is charged in USDT. Ensure USDT balance before placing option trades.
 
 ### RFQ / Block Trades (requires `ENABLE_RFQ=true`)
 
@@ -106,7 +120,7 @@ Multi-leg / block-trade support, taker side, for negotiated combos (options + li
 |------|-------------|
 | `rfq_query` | Read-only RFQ queries: `rfq_list` / `rfq_realtime` (your RFQs), `quote_list` / `quote_realtime` (LP quotes — the poll path while waiting for makers), `trade_list` (executed RFQ trades). Account-scoped; places no orders. |
 | `check_rfq_eligibility` | Pre-flight: calls `/v5/account/info` and reports whether the account meets RFQ hard requirements — UTA 2.0 + `PORTFOLIO_MARGIN` + (if a notional is supplied) the 10,000 USD per-RFQ minimum. Returns `{ eligible, reasons[], accountInfo }`. |
-| `assess_combo_risk` | Pure-math combo risk. Models max loss only when every leg is an option; any linear/spot, missing-spot, or unpriced leg → `modeled:false`, treated as uncovered. Max loss is computed on a ±30% price grid and **understates** an unbounded-tail (naked short) worst case — trust the `uncovered`/`allowed` flags, not the magnitude. |
+| `assess_combo_risk` | Pure-math combo risk. Models max loss only when every leg is an option; any linear/spot, missing-spot, unpriced, or mixed-underlying leg → `modeled:false`, treated as uncovered. Max loss is **exact** (analytic kinks + tail slopes — naked short puts and far-OTM strikes are caught); `maxLossUsd` is `null` when the loss is unbounded rather than a fake number. |
 | `create_rfq` | Create a 1–25-leg RFQ. `dry_run` defaults true; runs eligibility + combo-risk pre-flights. Live submission also requires `RFQ_ENABLE_WRITES=true`. |
 | `execute_quote` | Execute an LP quote against an RFQ — **irreversible, fills asynchronously**. `dry_run` (default) fetches and shows the live quote's legs/prices so confirmation is informed. Live requires `RFQ_ENABLE_WRITES=true`. |
 | `cancel_rfq` | Cancel an open RFQ you created (by `rfqId` or `rfqLinkId`). Risk-reducing — intentionally not behind the write kill-switch. |
@@ -181,9 +195,11 @@ Then use `node /absolute/path/to/bybit-mcp/dist/index.js` instead of `npx ajs-by
 | `BYBIT_API_KEY` | Yes | - | Bybit V5 API key |
 | `BYBIT_API_SECRET` | Yes | - | Bybit V5 API secret |
 | `BYBIT_TESTNET` | No | `true` | Use Bybit testnet API (`api-testnet.bybit.com`). Defaults to testnet; set `BYBIT_TESTNET=false` to trade on mainnet. **Keep the default for first-time setup.** |
+| `BYBIT_MCP_DATA_DIR` | No | `~/.bybit-mcp` | Directory for persisted analytics history (currently IV percentile samples, so the ~24h warmup survives restarts). A leading `~/` is expanded. |
+| `BYBIT_MCP_PERSIST` | No | `true` | Set to exactly `false` to disable analytics persistence (in-memory only, resets every session). |
 | `ENABLE_OPTIONS` | No | `false` | Enable the 4 options tools (`options_market`, `get_option_payoff`, `place_option_trade`, `close_option_position`) |
-| `OPTIONS_ALLOW_NAKED_SHORT` | No | `false` | Allow selling options without an offsetting long position. Naked short options carry unlimited or very large maximum loss. |
-| `OPTIONS_MAX_PREMIUM_PCT_BALANCE` | No | none | Block option buys where premium exceeds N% of USDC balance |
+| `OPTIONS_ALLOW_NAKED_SHORT` | No | `false` | Allow selling options without an offsetting long position. Naked short options carry unlimited or very large maximum loss. **Also overrides the RFQ uncovered-combo gate** (legacy coupling — prefer `RFQ_ALLOW_UNCOVERED` for RFQ-only). |
+| `OPTIONS_MAX_PREMIUM_PCT_BALANCE` | No | none | Block option buys where premium exceeds N% of USDT balance. Malformed values are rejected at call time (fail-closed). |
 | `ENABLE_RFQ` | No | `false` | Enable the 6 RFQ block-trade tools (`rfq_query`, `check_rfq_eligibility`, `assess_combo_risk`, `create_rfq`, `execute_quote`, `cancel_rfq`) |
 | `RFQ_ENABLE_WRITES` | No | `false` | Kill-switch for live RFQ submission. While `false`, `create_rfq`/`execute_quote` are dry-run only even with `dry_run=false`. Keep off until RFQ endpoint paths are confirmed against a live RFQ-eligible account. `cancel_rfq` is not gated by this. |
 | `RFQ_ALLOW_UNCOVERED` | No | `false` | Allow RFQ combos the risk engine cannot prove are risk-defined (uncovered net-short, or unmodelable mixed/unpriced legs). Off = such combos are blocked. The RFQ-path equivalent of `OPTIONS_ALLOW_NAKED_SHORT`. |
@@ -196,7 +212,7 @@ All execution tools (`place_trade`, `close_position`, `manage_position`, `cancel
 
 Option short selling is blocked by default unless `OPTIONS_ALLOW_NAKED_SHORT=true` is set or an offsetting long position exists. The naked short guard also catches partial naked shorts (e.g. selling 2 contracts when only 1 long exists).
 
-RFQ block-trade writes carry an additional kill-switch. `create_rfq` and `execute_quote` require **all** of: an explicit `dry_run=false`, `RFQ_ENABLE_WRITES=true`, and a passing eligibility + combo-risk pre-flight — and `RFQ_ENABLE_WRITES` stays `false` until RFQ endpoint paths are confirmed against a live RFQ-eligible account. `cancel_rfq` is deliberately exempt (blocking a risk-reducing cancel is the unsafe direction). Note that `assess_combo_risk` max-loss is bounded to a ±30% price grid and understates unbounded-tail (naked short) worst case — rely on its `uncovered`/`allowed` flags, not the maxLoss magnitude.
+RFQ block-trade writes carry an additional kill-switch. `create_rfq` and `execute_quote` require **all** of: an explicit `dry_run=false`, `RFQ_ENABLE_WRITES=true`, and a passing eligibility + combo-risk pre-flight — and `RFQ_ENABLE_WRITES` stays `false` until RFQ endpoint paths are confirmed against a live RFQ-eligible account. `execute_quote` risk-gates the book the taker would *end up with*: executing the LP's sell side inverts every leg, and the gate sees the inverted structure. `cancel_rfq` is deliberately exempt (blocking a risk-reducing cancel is the unsafe direction). `assess_combo_risk` max-loss is exact for all-option combos; when the loss is unbounded (net short calls) `maxLossUsd` is `null` — never a fake bound. Heads-up: `OPTIONS_ALLOW_NAKED_SHORT=true` also overrides the RFQ uncovered-combo gate (legacy coupling); prefer `RFQ_ALLOW_UNCOVERED` for RFQ-only overrides.
 
 ---
 
@@ -248,7 +264,20 @@ npm run dev         # auto-rebuild on file changes (TypeScript watch)
 npm run build       # compile to dist/
 ```
 
-Tests: 234 passing across 20 suites.
+Tests: 579 passing across 35 suites.
+
+---
+
+## Roadmap
+
+All four items of the second-tier quant roadmap shipped in v0.5.0:
+
+- ~~Position sizing calculator~~ → `calculate_position_size` (risk-per-trade, fractional Kelly, vol targeting, liquidation-distance constraint)
+- ~~Performance analytics~~ → `get_performance_stats` (win rate, profit factor, expectancy, Sharpe/Sortino, max drawdown, per-symbol attribution)
+- ~~Pairs / stat-arb toolkit~~ → `analyze_pair` (correlation, beta/hedge ratio, log-spread z-score, mean-reversion half-life)
+- ~~Crowding signals~~ → `scan_market` `account_ratio` filter + funding z-scores on `crowded_positioning`
+
+No further items are currently planned — open an issue if you want something on the list.
 
 ---
 

@@ -201,10 +201,13 @@ describe("handlePlaceSpot / conditional (trigger orders)", () => {
     const call = (client.signedPost as jest.Mock).mock.calls[0];
     expect(call[1].orderFilter).toBe("StopOrder");
     expect(call[1].triggerPrice).toBe("32000");
-    expect(call[1].triggerDirection).toBe(1);
+    // Bybit defines triggerBy/triggerDirection for linear & inverse only —
+    // sending them on spot would be silently ignored, so we must not send them.
+    expect(call[1].triggerDirection).toBeUndefined();
+    expect(call[1].triggerBy).toBeUndefined();
   });
 
-  it("dry_run surfaces trigger fields for spot conditional", async () => {
+  it("dry_run surfaces triggerPrice (and no futures-only trigger fields) for spot conditional", async () => {
     const client = new MockClient("k", "s", "u");
     (client.publicGet as jest.Mock).mockResolvedValue(mockTicker);
     (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
@@ -215,7 +218,21 @@ describe("handlePlaceSpot / conditional (trigger orders)", () => {
     }) as any;
 
     expect(result.triggerPrice).toBe("32000");
-    expect(result.triggerDirection).toBe(1);
+    expect(result.triggerDirection).toBeUndefined();
+  });
+
+  it("dry_run notional reflects the floored qty, not the requested margin", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker); // 30000
+    (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
+
+    const result = await handlePlaceSpot(client, {
+      symbol: "BTCUSDT", side: "Buy", margin: 100, category: "spot", dry_run: true,
+    }) as any;
+
+    // qty = floor(100/30000, 0.000001) = 0.003333 → notional = 99.99
+    expect(result.computedQty).toBe("0.003333");
+    expect(result.notional).toBe("99.99");
   });
 
   it("dry_run warns when triggerPrice is within 0.1% of market", async () => {
@@ -273,7 +290,7 @@ describe("handleCloseSpot", () => {
     const postCall = (client.signedPost as jest.Mock).mock.calls[0];
     expect(postCall[1].side).toBe("Sell");
     expect(postCall[1].category).toBe("spot");
-    expect(result.closedQty).toBe("0.500000");
+    expect((result as { closedQty: string }).closedQty).toBe("0.500000");
   });
 
   it("closes partial amount via percent", async () => {
@@ -283,7 +300,7 @@ describe("handleCloseSpot", () => {
 
     const result = await handleCloseSpot(client, { symbol: "BTCUSDT", percent: 50, confirm: "CONFIRM" });
 
-    expect(parseFloat(result.closedQty)).toBeCloseTo(0.25, 5);
+    expect(parseFloat((result as { closedQty: string }).closedQty)).toBeCloseTo(0.25, 5);
   });
 
   it("uses explicit qty when provided", async () => {
@@ -293,7 +310,7 @@ describe("handleCloseSpot", () => {
 
     const result = await handleCloseSpot(client, { symbol: "BTCUSDT", qty: 0.1, confirm: "CONFIRM" });
 
-    expect(parseFloat(result.closedQty)).toBeCloseTo(0.1, 5);
+    expect(parseFloat((result as { closedQty: string }).closedQty)).toBeCloseTo(0.1, 5);
   });
 
   it("throws when explicit qty exceeds available balance", async () => {
@@ -318,5 +335,35 @@ describe("handleCloseSpot", () => {
     await expect(
       handleCloseSpot(client, { symbol: "BTCUSDT", confirm: "CONFIRM" })
     ).rejects.toMatchObject({ message: expect.stringContaining("No BTC balance") });
+  });
+
+  it("without confirm rejects before any request (negative gate test)", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
+    (client.signedPost as jest.Mock).mockResolvedValue(mockOrderResult);
+
+    await expect(
+      handleCloseSpot(client, { symbol: "BTCUSDT" })
+    ).rejects.toThrow(/close_position requires confirm="CONFIRM"/);
+    expect(client.signedPost).not.toHaveBeenCalled();
+    expect(client.signedGet).not.toHaveBeenCalled();
+  });
+
+  it("dry_run returns a preview without confirm and without submitting", async () => {
+    const btcWallet = {
+      list: [{
+        accountType: "UNIFIED", totalEquity: "1000", totalMaintenanceMargin: "0",
+        coin: [{ coin: "BTC", walletBalance: "0.5", totalPositionIM: "0", unrealisedPnl: "0", equity: "0.5", locked: "0" }],
+      }],
+    };
+    const client = new MockClient("k", "s", "u");
+    (client.signedGet as jest.Mock).mockResolvedValue(btcWallet);
+    (client.signedPost as jest.Mock).mockResolvedValue(mockOrderResult);
+
+    const result = await handleCloseSpot(client, { symbol: "BTCUSDT", percent: 50, dry_run: true });
+
+    expect((result as { dryRun?: boolean }).dryRun).toBe(true);
+    expect(parseFloat((result as { closeQty: string }).closeQty)).toBeCloseTo(0.25, 6);
+    expect(client.signedPost).not.toHaveBeenCalled();
   });
 });

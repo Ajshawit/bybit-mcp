@@ -137,4 +137,59 @@ describe("assessComboRisk", () => {
     expect(res.modeled).toBe(false);
     expect(res.reasons.join(" ")).toMatch(/lack an estimated price/);
   });
+
+  // --- Cases the grid-slope gate got wrong (June 2026 audit) ---
+
+  it("flags a naked short PUT as uncovered (downside tail)", () => {
+    const legs: RiskLeg[] = [
+      { category: "option", symbol: "BTC-25APR26-80000-P-USDT", side: "sell", qty: 1, price: 5000 },
+    ];
+    const res = assessComboRisk({ legs, currentSpot: 80000 });
+    expect(res.uncovered).toBe(true);
+    expect(res.allowed).toBe(false);
+    expect(res.maxLossUsd).toBeCloseTo(-75000, 0); // exact loss at S=0, never a positive number
+  });
+
+  it("flags a far-OTM naked short call whose strike is outside ±30% of spot", () => {
+    const legs: RiskLeg[] = [
+      { category: "option", symbol: "BTC-25APR26-108000-C-USDT", side: "sell", qty: 1, price: 200 },
+    ];
+    const res = assessComboRisk({ legs, currentSpot: 80000 });
+    expect(res.uncovered).toBe(true);
+    expect(res.allowed).toBe(false);
+    expect(res.maxLossUsd).toBeNull(); // unbounded above — never report a fake bound
+    expect(res.reasons.join(" ")).toMatch(/unbounded|tail/i);
+  });
+
+  it("fails safe on zero, negative, and non-finite leg qty", () => {
+    for (const qty of [0, -1, NaN]) {
+      const legs: RiskLeg[] = [
+        { category: "option", symbol: CALL_80K, side: "buy", qty, price: 100 },
+      ];
+      const res = assessComboRisk({ legs, currentSpot: 80000 });
+      expect(res.modeled).toBe(false);
+      expect(res.allowed).toBe(false);
+    }
+  });
+
+  it("fails safe on mixed underlyings instead of mixing price axes", () => {
+    const legs: RiskLeg[] = [
+      { category: "option", symbol: CALL_80K, side: "buy", qty: 1, price: 100 },
+      { category: "option", symbol: "ETH-25APR26-2500-P-USDT", side: "sell", qty: 1, price: 50 },
+    ];
+    const res = assessComboRisk({ legs, currentSpot: 80000 });
+    expect(res.modeled).toBe(false);
+    expect(res.uncovered).toBe(true);
+    expect(res.allowed).toBe(false);
+  });
+
+  it("reports the exact naked-short-put maxLoss when overridden", () => {
+    process.env.RFQ_ALLOW_UNCOVERED = "true";
+    const legs: RiskLeg[] = [
+      { category: "option", symbol: "BTC-25APR26-80000-P-USDT", side: "sell", qty: 1, price: 5000 },
+    ];
+    const res = assessComboRisk({ legs, currentSpot: 80000 });
+    expect(res.allowed).toBe(true);
+    expect(res.maxLossUsd).toBeCloseTo(-75000, 0);
+  });
 });
