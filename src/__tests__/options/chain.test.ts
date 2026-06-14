@@ -127,13 +127,34 @@ describe("handleGetOptionChain", () => {
     expect(result.contracts[2].strike).toBe(100000);
   });
 
-  it("computes moneyness correctly (OTM call when strike > spot)", async () => {
+  it("returns compact contracts by default (no moneyness/mark/lastPrice/volume24h)", async () => {
     const client = new MockClient("k", "s", "u");
     (client.publicGet as jest.Mock)
       .mockResolvedValueOnce(mockChainResponse)
       .mockResolvedValueOnce(mockSpotResponse);
 
     const result = await handleGetOptionChain(client, { underlying: "BTC" });
+    const contract = result.contracts.find((c) => c.symbol === "BTC-25APR26-80000-C-USDT")!;
+
+    expect(contract).toMatchObject({
+      symbol: "BTC-25APR26-80000-C-USDT",
+      strike: 80000,
+      type: "call",
+      bid: 1100,
+      ask: 1200,
+      iv: 0.65,
+      openInterest: 100,
+    });
+    expect((contract as { moneyness?: string }).moneyness).toBeUndefined();
+  });
+
+  it("computes moneyness correctly (OTM call when strike > spot)", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce(mockChainResponse)
+      .mockResolvedValueOnce(mockSpotResponse);
+
+    const result = await handleGetOptionChain(client, { underlying: "BTC", compact: false });
     // strike 80000 < spot 95000 → ITM call
     const itm = result.contracts.find((c) => c.strike === 80000 && c.type === "call") as any;
     expect(itm.moneyness).toBe("ITM");

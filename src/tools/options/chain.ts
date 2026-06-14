@@ -36,7 +36,7 @@ export async function handleGetOptionChain(
     type,
     minOpenInterest = 10,
     strikeRange,
-    compact = false,
+    compact = true,
   } = params;
 
   const [chainRes, spotRes] = await Promise.all([

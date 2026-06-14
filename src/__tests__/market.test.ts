@@ -54,7 +54,7 @@ describe("handleGetMarketData", () => {
       .mockResolvedValueOnce(mockOrderbook) // orderbook
       .mockResolvedValueOnce({ list: [] }); // OI history (new)
 
-    const result = await handleGetMarketData(client, "BTCUSDT");
+    const result = await handleGetMarketData(client, "BTCUSDT", ["60", "240"], 24, 8, false, true);
 
     expect(result.ticker.symbol).toBe("BTCUSDT");
     expect(result.ticker.price).toBe(30000);
@@ -78,22 +78,33 @@ describe("handleGetMarketData", () => {
       .mockResolvedValueOnce(mockOrderbook)
       .mockResolvedValueOnce({ list: [] });
 
-    const result = await handleGetMarketData(client, "BTCUSDT");
+    const result = await handleGetMarketData(client, "BTCUSDT", ["60", "240"], 24, 8, false, true);
     expect(result.ticker.nextFundingTime).toBeNull();
     expect(result.ticker.secondsToNextFunding).toBeNull();
   });
 
-  it("uses default intervals [60, 240] and klineLimit 24", async () => {
+  it("uses default intervals [60, 240] and klineLimit 24 when includeKlines=true", async () => {
     const client = new MockClient("k", "s", "u");
     (client.publicGet as jest.Mock).mockResolvedValue({ list: [] });
 
-    await handleGetMarketData(client, "BTCUSDT");
+    await handleGetMarketData(client, "BTCUSDT", ["60", "240"], 24, 8, false, true);
 
     const calls = (client.publicGet as jest.Mock).mock.calls;
     const klineCalls = calls.filter(([path]: [string]) => path.includes("kline"));
     expect(klineCalls.some(([, p]: [string, Record<string, string>]) => p.interval === "60")).toBe(true);
     expect(klineCalls.some(([, p]: [string, Record<string, string>]) => p.interval === "240")).toBe(true);
     expect(klineCalls[0][1].limit).toBe("24");
+  });
+
+  it("skips kline API calls by default (includeKlines=false)", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue({ list: [], b: [], a: [], s: "" });
+
+    const result = await handleGetMarketData(client, "BTCUSDT");
+
+    const calls = (client.publicGet as jest.Mock).mock.calls;
+    expect(calls.some(([path]: [string]) => path.includes("kline"))).toBe(false);
+    expect(result.klines).toEqual({});
   });
 
   it("xStock path: skips funding/OI and includes nyseStatus when category=spot", async () => {
@@ -122,7 +133,7 @@ describe("handleGetMarketData", () => {
       .mockResolvedValueOnce(mockKline)     // kline interval 240
       .mockResolvedValueOnce(mockOrderbook); // orderbook
 
-    const result = await handleGetMarketData(client, "TSLAXUSDT", ["60", "240"], 24, 8, false, "spot");
+    const result = await handleGetMarketData(client, "TSLAXUSDT", ["60", "240"], 24, 8, false, true, "spot");
 
     expect(result.ticker.symbol).toBe("TSLAXUSDT");
     expect(result.ticker.price).toBe(185.5);
@@ -141,7 +152,7 @@ describe("handleGetMarketData", () => {
     const client = new MockClient("k", "s", "u");
     (client.publicGet as jest.Mock).mockResolvedValue({ list: [], b: [], a: [], s: "" });
 
-    await handleGetMarketData(client, "TSLAXUSDT", ["60"], 24, 8, false, "spot");
+    await handleGetMarketData(client, "TSLAXUSDT", ["60"], 24, 8, false, true, "spot");
 
     const calls = (client.publicGet as jest.Mock).mock.calls;
     expect(calls.every(([, p]: [string, Record<string, string>]) => p.category === "spot")).toBe(true);
@@ -157,7 +168,7 @@ describe("handleGetMarketData", () => {
       .mockResolvedValueOnce(mockOrderbook)
       .mockResolvedValueOnce({ list: [] });
 
-    const result = await handleGetMarketData(client, "BTCUSDT");
+    const result = await handleGetMarketData(client, "BTCUSDT", ["60", "240"], 24, 8, false, true);
     expect(result.ticker.fundingRate).toBe(0.0001);
     expect(result.nyseStatus).toBeUndefined();
   });
@@ -561,14 +572,36 @@ describe("handleGetOhlc", () => {
     ],
   };
 
-  it("maps kline tuples to MarketKlineBar[] correctly", async () => {
+  it("returns summary stats by default without candles", async () => {
     const client = new MockClient("k", "s", "u");
     (client.publicGet as jest.Mock).mockResolvedValueOnce(mockKlineResponse);
 
     const result = await handleGetOhlc(client, "BTCUSDT");
 
+    expect(result.candles).toBeUndefined();
+    expect(result.count).toBe(2);
+    expect(result.lastPrice).toBe(30050);
+    expect(result.periodHigh).toBe(30200);
+    expect(result.periodLow).toBe(29800);
+  });
+
+  it("maps kline tuples when includeCandles=true and candleFormat=tuples", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValueOnce(mockKlineResponse);
+
+    const result = await handleGetOhlc(client, "BTCUSDT", "linear", "60", 100, true, "tuples");
+
     expect(result.candles).toHaveLength(2);
-    expect(result.candles[0]).toEqual({
+    expect(result.candles![0]).toEqual([1700010000000, 30100, 30200, 29900, 30050, 100]);
+  });
+
+  it("maps object candles when includeCandles=true and candleFormat=objects", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValueOnce(mockKlineResponse);
+
+    const result = await handleGetOhlc(client, "BTCUSDT", "linear", "60", 100, true, "objects");
+
+    expect(result.candles![0]).toEqual({
       time: 1700010000000,
       open: 30100,
       high: 30200,
@@ -612,8 +645,11 @@ describe("handleGetOhlc", () => {
 
     const result = await handleGetOhlc(client, "BTCUSDT");
 
-    expect(result.candles).toEqual([]);
+    expect(result.candles).toBeUndefined();
+    expect(result.count).toBe(0);
     expect(result.lastPrice).toBe(0);
+    expect(result.periodHigh).toBe(0);
+    expect(result.periodLow).toBe(0);
   });
 
   it("sets lastPrice to candles[0].close", async () => {

@@ -91,6 +91,7 @@ function createServer(
             klineLimit: { type: "number", description: "Number of candles per interval. Default: 24" },
             fundingHistoryLimit: { type: "number", description: "Number of funding rate history records. Default: 8" },
             includeOrderbook: { type: "boolean", description: "If true, include full 20-level bids/asks arrays in the orderbook field. Default: false (returns 5-field summary only: bestBid, bestAsk, spread, spreadPct, midPrice)." },
+            includeKlines: { type: "boolean", description: "If true, fetch and return kline arrays per klineIntervals. Default: false (ticker/funding/OI only — use get_ohlc for candle history)." },
           },
           required: ["symbol"],
         },
@@ -110,7 +111,7 @@ function createServer(
       },
       {
         name: "get_ohlc",
-        description: "Fetch raw OHLC candles for any symbol and category. Returns candles newest-first; candles[0] is the most recent bar and its close is exposed as lastPrice. Use for swing level identification, stop placement reference, and blue-chip context (e.g. BTCUSDT spot or BTCUSD inverse). Returns empty candles array (not an error) if Bybit returns no data for the requested range. Works for all TradFi symbols: use category=spot for xStocks (e.g. TSLAXUSDT), category=linear for stock/commodity perps (e.g. TSLAPUSDT, XAUUSDT).",
+        description: "Fetch OHLC for any symbol/category. Default: summary only (lastPrice, count, periodHigh, periodLow). Set includeCandles=true for the series — candleFormat=tuples (default) returns compact [t,o,h,l,c,v] arrays; objects returns named fields. candles[0] is newest. Use get_market_data for ticker/funding/OI without candles.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -131,6 +132,8 @@ function createServer(
               maximum: 1000,
               description: "Number of candles to return. Default: 100",
             },
+            includeCandles: { type: "boolean", description: "Return the candle series. Default: false (summary stats only)." },
+            candleFormat: { type: "string", enum: ["tuples", "objects"], description: "When includeCandles=true: tuples (default) or objects." },
           },
           required: ["symbol"],
         },
@@ -431,7 +434,7 @@ function createServer(
               underlying: { type: "string", enum: ["BTC", "ETH", "SOL"], description: "Required for chain and scan" },
               underlyings: { type: "array", items: { type: "string", enum: ["BTC", "ETH", "SOL"] }, description: "For regime: default all three" },
               symbol: { type: "string", description: "For quote: full Bybit option symbol" },
-              computeGreeksLocal: { type: "boolean", description: "For quote: verify Greeks via Black-Scholes. Default: false" },
+              computeGreeksLocal: { type: "boolean", description: "For quote: verify Greeks via Black-Scholes. Default: true" },
               minDaysToExpiry: { type: "number", description: "For chain. Default: 0" },
               maxDaysToExpiry: { type: "number", description: "For chain. Default: 60" },
               type: { type: "string", enum: ["call", "put"], description: "For chain: omit for both" },
@@ -444,7 +447,7 @@ function createServer(
               filter: { type: "string", enum: ["high_iv", "low_iv", "skew", "high_oi_change"], description: "For scan" },
               expiry: { type: "string", enum: ["weekly", "monthly", "all"], description: "For scan. Default: all" },
               limit: { type: "number", description: "For scan. Default: 10" },
-              compact: { type: "boolean", description: "For chain: return minimal fields only (symbol, strike, expiry, daysToExpiry, type, bid, ask, iv, openInterest). Default: false" },
+              compact: { type: "boolean", description: "For chain: return minimal fields only (symbol, strike, expiry, daysToExpiry, type, bid, ask, iv, openInterest). Default: true" },
             },
             // Per-action required fields (chain→underlying, quote→symbol,
             // scan→underlying+filter) are enforced at runtime in the options
@@ -658,6 +661,7 @@ function createServer(
             a.klineLimit as number | undefined,
             a.fundingHistoryLimit as number | undefined,
             a.includeOrderbook as boolean | undefined,
+            a.includeKlines as boolean | undefined,
             (a.category as "linear" | "spot" | undefined) ?? "linear"
           );
           result = { ...data, serverTimestamp: new Date().toISOString() };
@@ -681,7 +685,9 @@ function createServer(
             a.symbol as string,
             a.category as "linear" | "inverse" | "spot" | undefined,
             a.interval as string | undefined,
-            a.limit as number | undefined
+            a.limit as number | undefined,
+            a.includeCandles as boolean | undefined,
+            assertOneOf(a.candleFormat, ["tuples", "objects"] as const, "candleFormat", "get_ohlc")
           );
           result = { ...data, serverTimestamp: new Date().toISOString() };
           break;
@@ -1107,7 +1113,7 @@ function createServer(
           throw new Error(`Unknown tool: ${name}`);
       }
 
-      return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       return {

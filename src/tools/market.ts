@@ -106,13 +106,20 @@ export interface MarketDataResult {
   nyseStatus?: NyseStatus;
 }
 
+export type OhlcCandleTuple = [number, number, number, number, number, number];
+
 export interface OhlcResult {
   symbol: string;
   category: "linear" | "inverse" | "spot";
   interval: string;
-  lastPrice: number;      // candles[0].close, or 0 if empty
-  candles: MarketKlineBar[];  // newest-first (Bybit native order)
+  lastPrice: number;
+  count: number;
+  periodHigh: number;
+  periodLow: number;
+  candles?: MarketKlineBar[] | OhlcCandleTuple[];
 }
+
+const r2 = (v: number) => Math.round(v * 100) / 100;
 
 export async function handleGetMarketData(
   client: BybitClient,
@@ -121,24 +128,29 @@ export async function handleGetMarketData(
   klineLimit = 24,
   fundingHistoryLimit = 8,
   includeOrderbook = false,
+  includeKlines = false,
   category: "linear" | "spot" = "linear"
 ): Promise<MarketDataResult> {
   if (category === "spot") {
     const spotResults = await Promise.all([
       client.publicGet<TickersResult>("/v5/market/tickers", { category: "spot", symbol }),
-      ...klineIntervals.map((interval) =>
-        client.publicGet<KlineResult>("/v5/market/kline", {
-          category: "spot", symbol, interval, limit: String(klineLimit),
-        })
-      ),
+      ...(includeKlines
+        ? klineIntervals.map((interval) =>
+            client.publicGet<KlineResult>("/v5/market/kline", {
+              category: "spot", symbol, interval, limit: String(klineLimit),
+            })
+          )
+        : []),
       client.publicGet<OrderbookEntry>("/v5/market/orderbook", {
         category: "spot", symbol, limit: "20",
       }),
     ]);
 
     const spotTicker = (spotResults[0] as TickersResult).list?.[0];
-    const spotKlineResults = spotResults.slice(1, 1 + klineIntervals.length) as KlineResult[];
-    const spotObRes = spotResults[1 + klineIntervals.length] as OrderbookEntry;
+    const spotKlineResults = includeKlines
+      ? (spotResults.slice(1, 1 + klineIntervals.length) as KlineResult[])
+      : [];
+    const spotObRes = spotResults[includeKlines ? 1 + klineIntervals.length : 1] as OrderbookEntry;
 
     const ticker: MarketTicker = {
       symbol: spotTicker?.symbol ?? symbol,
@@ -159,14 +171,16 @@ export async function handleGetMarketData(
     };
 
     const klines: Record<string, MarketKlineBar[]> = {};
-    klineIntervals.forEach((interval, i) => {
-      klines[interval] = (spotKlineResults[i]?.list ?? []).map(
-        ([time, open, high, low, close, volume]) => ({
-          time: parseInt(time), open: parseFloat(open), high: parseFloat(high),
-          low: parseFloat(low), close: parseFloat(close), volume: parseFloat(volume),
-        })
-      );
-    });
+    if (includeKlines) {
+      klineIntervals.forEach((interval, i) => {
+        klines[interval] = (spotKlineResults[i]?.list ?? []).map(
+          ([time, open, high, low, close, volume]) => ({
+            time: parseInt(time), open: parseFloat(open), high: parseFloat(high),
+            low: parseFloat(low), close: parseFloat(close), volume: parseFloat(volume),
+          })
+        );
+      });
+    }
 
     const spotBids = (spotObRes.b ?? []).map(([p, s]) => [parseFloat(p), parseFloat(s)] as [number, number]);
     const spotAsks = (spotObRes.a ?? []).map(([p, s]) => [parseFloat(p), parseFloat(s)] as [number, number]);
@@ -185,14 +199,16 @@ export async function handleGetMarketData(
   // Linear/inverse perp path (unchanged below)
   const allResults = await Promise.all([
     client.publicGet<TickersResult>("/v5/market/tickers", { category: "linear", symbol }),
-    ...klineIntervals.map((interval) =>
-      client.publicGet<KlineResult>("/v5/market/kline", {
-        category: "linear",
-        symbol,
-        interval,
-        limit: String(klineLimit),
-      })
-    ),
+    ...(includeKlines
+      ? klineIntervals.map((interval) =>
+          client.publicGet<KlineResult>("/v5/market/kline", {
+            category: "linear",
+            symbol,
+            interval,
+            limit: String(klineLimit),
+          })
+        )
+      : []),
     client.publicGet<FundingHistoryResult>("/v5/market/funding/history", {
       category: "linear",
       symbol,
@@ -212,10 +228,13 @@ export async function handleGetMarketData(
   ]);
 
   const tickersRes = allResults[0] as TickersResult;
-  const klineResults = allResults.slice(1, 1 + klineIntervals.length) as KlineResult[];
-  const fundingRes = allResults[1 + klineIntervals.length] as FundingHistoryResult;
-  const obRes = allResults[2 + klineIntervals.length] as OrderbookEntry;
-  const oiRes = allResults[3 + klineIntervals.length] as OIHistoryResult | null;
+  const klineOffset = includeKlines ? klineIntervals.length : 0;
+  const klineResults = includeKlines
+    ? (allResults.slice(1, 1 + klineIntervals.length) as KlineResult[])
+    : [];
+  const fundingRes = allResults[1 + klineOffset] as FundingHistoryResult;
+  const obRes = allResults[2 + klineOffset] as OrderbookEntry;
+  const oiRes = allResults[3 + klineOffset] as OIHistoryResult | null;
   const oiList = oiRes?.list ?? [];
 
   const t = tickersRes.list?.[0];
@@ -248,18 +267,20 @@ export async function handleGetMarketData(
   };
 
   const klines: Record<string, MarketKlineBar[]> = {};
-  klineIntervals.forEach((interval, i) => {
-    klines[interval] = (klineResults[i]?.list ?? []).map(
-      ([time, open, high, low, close, volume]) => ({
-        time: parseInt(time),
-        open: parseFloat(open),
-        high: parseFloat(high),
-        low: parseFloat(low),
-        close: parseFloat(close),
-        volume: parseFloat(volume),
-      })
-    );
-  });
+  if (includeKlines) {
+    klineIntervals.forEach((interval, i) => {
+      klines[interval] = (klineResults[i]?.list ?? []).map(
+        ([time, open, high, low, close, volume]) => ({
+          time: parseInt(time),
+          open: parseFloat(open),
+          high: parseFloat(high),
+          low: parseFloat(low),
+          close: parseFloat(close),
+          volume: parseFloat(volume),
+        })
+      );
+    });
+  }
 
   const fundingHistory = fundingList.map((f) => ({
     rate: parseFloat(f.fundingRate),
@@ -285,7 +306,9 @@ export async function handleGetOhlc(
   symbol: string,
   category: "linear" | "inverse" | "spot" = "linear",
   interval: string = "60",
-  limit: number = 100
+  limit: number = 100,
+  includeCandles = false,
+  candleFormat: "objects" | "tuples" = "tuples"
 ): Promise<OhlcResult> {
   const res = await client.publicGet<KlineResult>("/v5/market/kline", {
     category,
@@ -305,13 +328,27 @@ export async function handleGetOhlc(
     })
   );
 
-  return {
-    symbol,
-    category,
-    interval,
-    lastPrice: candles.length > 0 ? candles[0].close : 0,
-    candles,
-  };
+  const count = candles.length;
+  const lastPrice = count > 0 ? r2(candles[0].close) : 0;
+  const periodHigh = count > 0 ? r2(Math.max(...candles.map((c) => c.high))) : 0;
+  const periodLow = count > 0 ? r2(Math.min(...candles.map((c) => c.low))) : 0;
+
+  const result: OhlcResult = { symbol, category, interval, lastPrice, count, periodHigh, periodLow };
+
+  if (includeCandles) {
+    result.candles = candleFormat === "objects"
+      ? candles.map((c) => ({
+          time: c.time,
+          open: r2(c.open),
+          high: r2(c.high),
+          low: r2(c.low),
+          close: r2(c.close),
+          volume: r2(c.volume),
+        }))
+      : candles.map((c) => [c.time, r2(c.open), r2(c.high), r2(c.low), r2(c.close), r2(c.volume)] as OhlcCandleTuple) as OhlcCandleTuple[];
+  }
+
+  return result;
 }
 
 export interface MarketRegimeResult {
@@ -427,7 +464,6 @@ export async function handleGetMarketRegime(
 
 export type ScanFilter = "oi_divergence" | "crowded_positioning" | "volume_spike" | "account_ratio";
 
-const r2 = (v: number) => Math.round(v * 100) / 100;
 const ri = (v: number) => Math.round(v);
 
 // Funding z-score needs enough history for a stable baseline. 200 records is
