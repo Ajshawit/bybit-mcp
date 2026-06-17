@@ -3,6 +3,7 @@ import { TickersResult } from "../types";
 import {
   OptionTickersResult,
   OptionContract,
+  OptionUnderlying,
   parseOptionSymbol,
   computeMoneyness,
 } from "./types";
@@ -20,7 +21,7 @@ export interface OptionChainResult {
 export async function handleGetOptionChain(
   client: BybitClient,
   params: {
-    underlying: "BTC" | "ETH" | "SOL";
+    underlying: OptionUnderlying;
     minDaysToExpiry?: number;
     maxDaysToExpiry?: number;
     type?: "call" | "put";

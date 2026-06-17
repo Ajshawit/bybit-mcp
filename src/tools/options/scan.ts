@@ -1,6 +1,6 @@
 import { BybitClient } from "../../client";
 import { JsonFileStore } from "../../storage";
-import { OptionTickersResult, parseOptionSymbol } from "./types";
+import { OptionTickersResult, OptionUnderlying, parseOptionSymbol } from "./types";
 
 const MIN_WARMUP_SAMPLES = 20;
 const MAX_SAMPLES_PER_BUCKET = 10000;
@@ -91,7 +91,7 @@ export async function handleScanOptions(
   client: BybitClient,
   ivStore: IVSampleStore,
   params: {
-    underlying: "BTC" | "ETH" | "SOL";
+    underlying: OptionUnderlying;
     filter: "high_iv" | "low_iv" | "skew" | "high_oi_change";
     expiry?: "weekly" | "monthly" | "all";
     limit?: number;

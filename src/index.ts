@@ -23,6 +23,8 @@ import {
   handleScanOptions, handleGetOptionsRegime, IVSampleStore,
   handlePlaceOptionTrade, handleCloseOptionPosition,
 } from "./tools/options/index.js";
+import { OPTION_UNDERLYINGS } from "./tools/options/types.js";
+import type { OptionUnderlying } from "./tools/options/types.js";
 import {
   handleGetRfqList, handleGetRfqRealtime, handleGetQuoteList,
   handleGetQuoteRealtime, handleGetRfqTradeList,
@@ -155,7 +157,7 @@ function createServer(
       },
       {
         name: "get_volatility",
-        description: "Realized-volatility analytics for any symbol. Returns three annualized RV estimators over a recent window (closeToClose, parkinson high-low, yangZhang), plus a vol cone — current RV vs its own min/p25/median/p75/max across 1d/3d/7d/14d/30d horizons over the fetched history. When options are enabled and symbol is BTCUSDT/ETHUSDT/SOLUSDT, also returns the ATM IV from the expiry nearest the RV window with ivMinusRv (positive = implied rich vs realized — the variance-risk-premium signal for vol selling/buying decisions). All volatilities are annualized decimals (0.45 = 45%), same convention as option markIv.",
+        description: "Realized-volatility analytics for any symbol. Returns three annualized RV estimators over a recent window (closeToClose, parkinson high-low, yangZhang), plus a vol cone — current RV vs its own min/p25/median/p75/max across 1d/3d/7d/14d/30d horizons over the fetched history. When options are enabled and symbol is BTCUSDT/ETHUSDT/SOLUSDT/XAUTUSDT/XRPUSDT/MNTUSDT/DOGEUSDT, also returns the ATM IV from the expiry nearest the RV window with ivMinusRv (positive = implied rich vs realized — the variance-risk-premium signal for vol selling/buying decisions). All volatilities are annualized decimals (0.45 = 45%), same convention as option markIv.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -426,13 +428,13 @@ function createServer(
       ...(ENABLE_OPTIONS ? [
         {
           name: "options_market",
-          description: "Options market data — four actions. action='chain': browse contracts for BTC/ETH/SOL, returns contracts[]. action='quote': full pricing + Greeks for a single symbol (e.g. BTC-25APR26-80000-C-USDT), returns contract details + greeks object. action='scan': scan for unusual IV (high_iv/low_iv require ~24h warmup), returns anomaly contracts[] + percentileAvailable. action='regime': ATM IV, IV percentile, put/call skew, term structure per underlying, returns per-underlying regime object.",
+          description: "Options market data — four actions. action='chain': browse contracts for BTC/ETH/SOL/XAUT/XRP/MNT/DOGE, returns contracts[]. action='quote': full pricing + Greeks for a single symbol (e.g. BTC-25APR26-80000-C-USDT), returns contract details + greeks object. action='scan': scan for unusual IV (high_iv/low_iv require ~24h warmup), returns anomaly contracts[] + percentileAvailable. action='regime': ATM IV, IV percentile, put/call skew, term structure per underlying, returns per-underlying regime object.",
           inputSchema: {
             type: "object" as const,
             properties: {
               action: { type: "string", enum: ["chain", "quote", "scan", "regime"] },
-              underlying: { type: "string", enum: ["BTC", "ETH", "SOL"], description: "Required for chain and scan" },
-              underlyings: { type: "array", items: { type: "string", enum: ["BTC", "ETH", "SOL"] }, description: "For regime: default all three" },
+              underlying: { type: "string", enum: [...OPTION_UNDERLYINGS], description: "Required for chain and scan" },
+              underlyings: { type: "array", items: { type: "string", enum: [...OPTION_UNDERLYINGS] }, description: "For regime: default all underlyings" },
               symbol: { type: "string", description: "For quote: full Bybit option symbol" },
               computeGreeksLocal: { type: "boolean", description: "For quote: verify Greeks via Black-Scholes. Default: false" },
               minDaysToExpiry: { type: "number", description: "For chain. Default: 0" },
@@ -488,7 +490,7 @@ function createServer(
         },
         {
           name: "place_option_trade",
-          description: "place_option_trade — Place a single-leg option order on Bybit (BTC, ETH, SOL). CONFIRMATION REQUIRED: (1) Present the full trade plan — symbol, side, qty, orderType, estimated premium, Greeks, payoff summary. (2) Wait for the user to reply with 'CONFIRM'. (3) Only call this tool after receiving explicit CONFIRM. Recommended workflow: present plan → CONFIRM → call with dry_run=true → verify estimatedPremium and warnings → call again with dry_run=false. Short selling requires OPTIONS_ALLOW_NAKED_SHORT=true unless an offsetting long exists.",
+          description: "place_option_trade — Place a single-leg option order on Bybit (BTC, ETH, SOL, XAUT, XRP, MNT, DOGE). CONFIRMATION REQUIRED: (1) Present the full trade plan — symbol, side, qty, orderType, estimated premium, Greeks, payoff summary. (2) Wait for the user to reply with 'CONFIRM'. (3) Only call this tool after receiving explicit CONFIRM. Recommended workflow: present plan → CONFIRM → call with dry_run=true → verify estimatedPremium and warnings → call again with dry_run=false. Short selling requires OPTIONS_ALLOW_NAKED_SHORT=true unless an offsetting long exists.",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -903,7 +905,7 @@ function createServer(
           if (action === "chain") {
             if (!a.underlying) throw new Error("underlying is required for action 'chain'");
             const data = await handleGetOptionChain(client, {
-              underlying: a.underlying as "BTC" | "ETH" | "SOL",
+              underlying: a.underlying as OptionUnderlying,
               minDaysToExpiry: a.minDaysToExpiry as number | undefined,
               maxDaysToExpiry: a.maxDaysToExpiry as number | undefined,
               type: a.type as "call" | "put" | undefined,
@@ -924,7 +926,7 @@ function createServer(
             if (!a.underlying) throw new Error("underlying is required for action 'scan'");
             if (!a.filter) throw new Error("filter is required for action 'scan'");
             const data = await handleScanOptions(client, ivStore, {
-              underlying: a.underlying as "BTC" | "ETH" | "SOL",
+              underlying: a.underlying as OptionUnderlying,
               filter: a.filter as "high_iv" | "low_iv" | "skew" | "high_oi_change",
               expiry: a.expiry as "weekly" | "monthly" | "all" | undefined,
               limit: a.limit as number | undefined,
@@ -932,7 +934,7 @@ function createServer(
             result = { ...data, serverTimestamp: new Date().toISOString() };
           } else if (action === "regime") {
             const data = await handleGetOptionsRegime(client, ivStore, {
-              underlying: a.underlyings as Array<"BTC" | "ETH" | "SOL"> | undefined,
+              underlying: a.underlyings as OptionUnderlying[] | undefined,
             });
             result = { ...data, serverTimestamp: new Date().toISOString() };
           } else {

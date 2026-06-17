@@ -1,6 +1,6 @@
 import { BybitClient } from "../client";
 import { PositionListResult, TickersResult } from "./types";
-import { OptionTickersResult, parseOptionSymbol } from "./options/types";
+import { OptionTickersResult, OPTION_UNDERLYINGS, parseOptionSymbol } from "./options/types";
 import { concurrentMap, isNyseOpen, NyseStatus } from "../util";
 
 // Event calendar: the time-based context a trading decision needs — when
@@ -9,7 +9,6 @@ import { concurrentMap, isNyseOpen, NyseStatus } from "../util";
 
 const DEFAULT_DAYS_AHEAD = 45;
 const MAX_FUNDING_SYMBOLS = 10;
-const OPTION_UNDERLYINGS = ["BTC", "ETH", "SOL"] as const;
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
 const ri = (v: number) => Math.round(v);

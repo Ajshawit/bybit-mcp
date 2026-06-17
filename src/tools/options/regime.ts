@@ -1,5 +1,5 @@
 import { BybitClient } from "../../client";
-import { OptionTickersResult, parseOptionSymbol } from "./types";
+import { OptionTickersResult, OptionUnderlying, OPTION_UNDERLYINGS, parseOptionSymbol } from "./types";
 import { IVSampleStore, expiryBucket } from "./scan";
 
 export interface OptionsRegimeSignal {
@@ -134,9 +134,9 @@ function computeTermStructure(
 export async function handleGetOptionsRegime(
   client: BybitClient,
   ivStore: IVSampleStore,
-  params: { underlying?: Array<"BTC" | "ETH" | "SOL"> }
+  params: { underlying?: ReadonlyArray<OptionUnderlying> }
 ): Promise<OptionsRegimeResult> {
-  const underlyings = params.underlying ?? (["BTC", "ETH", "SOL"] as const);
+  const underlyings = params.underlying ?? OPTION_UNDERLYINGS;
   const now = Date.now();
 
   const [chains, spotPrices] = await Promise.all([

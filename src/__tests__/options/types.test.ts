@@ -1,10 +1,23 @@
-import { parseOptionSymbol, computeMoneyness, OPTION_MULTIPLIERS } from "../../tools/options/types";
+import { parseOptionSymbol, computeMoneyness, OPTION_MULTIPLIERS, OPTION_UNDERLYINGS } from "../../tools/options/types";
 
 describe("OPTION_MULTIPLIERS", () => {
   it("BTC=1, ETH=1, SOL=1", () => {
     expect(OPTION_MULTIPLIERS["BTC"]).toBe(1);
     expect(OPTION_MULTIPLIERS["ETH"]).toBe(1);  // 1 contract = 1 ETH; confirmed via Bybit instruments-info
     expect(OPTION_MULTIPLIERS["SOL"]).toBe(1);
+  });
+
+  it("XAUT/XRP/MNT/DOGE = 1 (USDT options denominate qty in base-coin units)", () => {
+    expect(OPTION_MULTIPLIERS["XAUT"]).toBe(1);
+    expect(OPTION_MULTIPLIERS["XRP"]).toBe(1);
+    expect(OPTION_MULTIPLIERS["MNT"]).toBe(1);
+    expect(OPTION_MULTIPLIERS["DOGE"]).toBe(1);
+  });
+});
+
+describe("OPTION_UNDERLYINGS", () => {
+  it("lists every Bybit option underlying (crypto + XAUT/XRP/MNT/DOGE)", () => {
+    expect([...OPTION_UNDERLYINGS]).toEqual(["BTC", "ETH", "SOL", "XAUT", "XRP", "MNT", "DOGE"]);
   });
 });
 
@@ -27,6 +40,19 @@ describe("parseOptionSymbol", () => {
     expect(result.type).toBe("put");
     expect(result.expiry.getUTCMonth()).toBe(4); // May = 4
     expect(result.expiry.getUTCDate()).toBe(30);
+  });
+
+  it("parses fractional strikes for sub-dollar underlyings", () => {
+    expect(parseOptionSymbol("MNT-31JUL26-0.25-P-USDT").strike).toBe(0.25);
+    expect(parseOptionSymbol("DOGE-31JUL26-0.07-C-USDT").strike).toBe(0.07);
+    expect(parseOptionSymbol("XRP-31JUL26-2.2-C-USDT").strike).toBe(2.2);
+  });
+
+  it("parses a large XAUT (gold) strike and underlying", () => {
+    const r = parseOptionSymbol("XAUT-31JUL26-3950-P-USDT");
+    expect(r.underlying).toBe("XAUT");
+    expect(r.strike).toBe(3950);
+    expect(r.type).toBe("put");
   });
 
   it("throws on malformed symbol", () => {

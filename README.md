@@ -69,7 +69,7 @@ Bybit V5 API for AI agents, with confirmation-based safety rails. Exposes Bybit'
 | Tool | Description |
 |------|-------------|
 | `get_portfolio_risk` | Portfolio-level risk in one call: net delta (USD) per underlying across linear perps, inverse perps, and options; aggregated gamma / vega / theta; gross notional, leverage ratio, concentration. Then a **scenario stress grid** — spot shocks (default ±5/10/20%) × IV shocks (default ±10 pts) with options repriced via Black-Scholes — including the worst-case cell. Answers "what does a −20% gap do to the account?" |
-| `get_volatility` | Realized-volatility toolkit for any symbol: three annualized estimators (close-to-close, Parkinson, Yang-Zhang) over a recent window, plus a **vol cone** (current RV vs its own min/p25/median/p75/max across 1d–30d horizons). With options enabled on BTC/ETH/SOL it adds ATM IV from the matching expiry and the **IV−RV spread** — the variance-risk-premium signal for vol buy/sell decisions. |
+| `get_volatility` | Realized-volatility toolkit for any symbol: three annualized estimators (close-to-close, Parkinson, Yang-Zhang) over a recent window, plus a **vol cone** (current RV vs its own min/p25/median/p75/max across 1d–30d horizons). With options enabled on BTC/ETH/SOL/XAUT/XRP/MNT/DOGE it adds ATM IV from the matching expiry and the **IV−RV spread** — the variance-risk-premium signal for vol buy/sell decisions. |
 | `get_carry_analytics` | Basis & funding carry. `action=basis`: mark-vs-index basis, current + realized funding annualized, **predicted next funding** from the premium index (Bybit's formula), perp-vs-spot basis, dated-futures annualized basis. `action=scan`: every liquid perp ranked by annualized carry — who pays shorts, who pays longs — using each symbol's real funding interval. |
 | `estimate_execution_cost` | Pre-trade cost from deep books (500 levels perps / 200 spot): expected average fill, slippage vs mid (bps), book imbalance, your account's actual taker/maker fees, **all-in cost** (slippage + fees), and the max size executable within a slippage budget. Warns when an order would sweep the whole visible book. |
 | `get_event_calendar` | Upcoming events: next funding time + rate per symbol (defaults to your open positions), option expiry schedule with OI notional by date, dated-futures deliveries, and NYSE session status for TradFi symbols. |
@@ -103,11 +103,13 @@ Bybit V5 API for AI agents, with confirmation-based safety rails. Exposes Bybit'
 
 ### Options (requires `ENABLE_OPTIONS=true`)
 
+Underlyings: **BTC, ETH, SOL, XAUT (Tether Gold), XRP, MNT, DOGE** — all USDT-settled and USDT-quoted. `quote` and `place_option_trade` accept any full Bybit option symbol (e.g. `XAUT-31JUL26-3950-P-USDT`), so every listed contract is reachable.
+
 | Tool | Description |
 |------|-------------|
-| `options_market` | Consolidated options data for BTC/ETH/SOL. Select mode via `action`: **`chain`** (browse contracts, filterable by expiry/type/OI/strike range; returns minimal fields by default — pass `compact:false` for the full set incl. moneyness/mark/lastPrice/volume24h), **`quote`** (full pricing + Greeks for one symbol, opt-in local Black-Scholes verification via `computeGreeksLocal:true`), **`scan`** (IV anomalies — `high_iv`/`low_iv` need ~24h warmup — plus `skew`, `high_oi_change`), **`regime`** (ATM IV, IV percentile, put/call skew, term structure per underlying). |
+| `options_market` | Consolidated options data for BTC, ETH, SOL, XAUT, XRP, MNT, DOGE. Select mode via `action`: **`chain`** (browse contracts, filterable by expiry/type/OI/strike range; returns minimal fields by default — pass `compact:false` for the full set incl. moneyness/mark/lastPrice/volume24h), **`quote`** (full pricing + Greeks for one symbol, opt-in local Black-Scholes verification via `computeGreeksLocal:true`), **`scan`** (IV anomalies — `high_iv`/`low_iv` need ~24h warmup — plus `skew`, `high_oi_change`), **`regime`** (ATM IV, IV percentile, put/call skew, term structure per underlying). |
 | `get_option_payoff` | Compute expiry payoff for one or more legs — PnL at each price point, max loss, max profit, breakeven(s). Pure math, no API call. Use before placing to verify risk/reward. |
-| `place_option_trade` | Place a single-leg option order (BTC/ETH/SOL) with `dry_run` support and naked-short guards. |
+| `place_option_trade` | Place a single-leg option order (BTC, ETH, SOL, XAUT, XRP, MNT, DOGE) with `dry_run` support and naked-short guards. |
 | `close_option_position` | Close an open option position fully or partially, with `dry_run` P&L preview. |
 
 All option symbols this server trades are **USDT-settled** (`-USDT` suffix) — premium is charged in USDT. Ensure USDT balance before placing option trades.

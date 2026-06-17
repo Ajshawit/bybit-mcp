@@ -111,7 +111,7 @@ describe("handleGetOptionsRegime", () => {
     expect(result.signals["BTC"].ivPercentile30d).toBeNull();
   });
 
-  it("queries all three underlyings by default", async () => {
+  it("queries all option underlyings by default", async () => {
     const client = new MockClient("k", "s", "u");
     const store = new IVSampleStore();
     (client.publicGet as jest.Mock).mockImplementation(mockPublicGet(mockBtcChain));
@@ -121,9 +121,9 @@ describe("handleGetOptionsRegime", () => {
     const calls = (client.publicGet as jest.Mock).mock.calls;
     const baseCoinCalls = calls.filter(([, p]: [string, Record<string, string>]) => p.baseCoin);
     const coins = baseCoinCalls.map(([, p]: [string, Record<string, string>]) => p.baseCoin);
-    expect(coins).toContain("BTC");
-    expect(coins).toContain("ETH");
-    expect(coins).toContain("SOL");
+    for (const u of ["BTC", "ETH", "SOL", "XAUT", "XRP", "MNT", "DOGE"]) {
+      expect(coins).toContain(u);
+    }
   });
 
   it("returns flat termStructure when only one expiry is available", async () => {

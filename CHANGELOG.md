@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] — 2026-06-18
+
+Options coverage expanded from 3 to 7 underlyings. 589 tests across 35 suites.
+
+### Added
+
+- **XAUT, XRP, MNT, DOGE options** — `options_market` (`chain`/`scan`/`regime`), the `get_volatility` IV−RV spread, and the `get_event_calendar` option-expiry schedule now cover Bybit's XAUT (Tether Gold), XRP, MNT, and DOGE USDT-settled options alongside BTC/ETH/SOL. `quote` and `place_option_trade` already accepted any full option symbol (`XAUT-31JUL26-3950-P-USDT`); their schemas and docs now advertise the new underlyings. A single `OPTION_UNDERLYINGS` constant (`src/tools/options/types.ts`) is now the source of truth, replacing the `["BTC","ETH","SOL"]` literals previously scattered across the options, volatility, and calendar tools.
+
+### Changed
+
+- **`options_market` `regime` default** — with no `underlyings` argument it now returns signals for all 7 underlyings (previously BTC/ETH/SOL only).
+
 ## [0.5.1] — 2026-06-14
 
 Token-overhead reduction with compact defaults on responses and reads. 585 tests across 35 suites.

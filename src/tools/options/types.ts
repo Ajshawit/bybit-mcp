@@ -1,7 +1,21 @@
+// Single source of truth for the option underlyings Bybit lists (all
+// USDT-settled, USDT-quoted). Verified live: each has hundreds of Trading
+// contracts and a matching ${u}USDT spot + linear perp for spot reference.
+export const OPTION_UNDERLYINGS = ["BTC", "ETH", "SOL", "XAUT", "XRP", "MNT", "DOGE"] as const;
+export type OptionUnderlying = (typeof OPTION_UNDERLYINGS)[number];
+
+// Contract multiplier = base-coin units per 1 unit of order qty. Bybit USDT
+// options denominate qty directly in base-coin units and quote premium per
+// coin, so the multiplier is 1 for every underlying; the per-coin differences
+// in instruments-info lotSizeFilter are min/step granularity, not multipliers.
 export const OPTION_MULTIPLIERS: Record<string, number> = {
   BTC: 1,
   ETH: 1,  // 1 contract = 1 ETH; confirmed via instruments-info lotSizeFilter
   SOL: 1,
+  XAUT: 1,
+  XRP: 1,
+  MNT: 1,
+  DOGE: 1,
 };
 
 const MONTHS: Record<string, number> = {

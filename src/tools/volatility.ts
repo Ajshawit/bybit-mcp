@@ -1,6 +1,6 @@
 import { BybitClient } from "../client";
 import { KlineResult } from "./types";
-import { OptionTickersResult } from "./options/types";
+import { OptionTickersResult, OptionUnderlying, OPTION_UNDERLYINGS } from "./options/types";
 import { atmIvForExpiry, sortedExpiries } from "./options/regime";
 
 // Realized-volatility analytics: estimator suite + vol cone + optional
@@ -54,11 +54,10 @@ interface Bar {
 
 const MINUTES_PER_YEAR = 365 * 1440;
 const CONE_HORIZON_DAYS = [1, 3, 7, 14, 30] as const;
-const IV_UNDERLYINGS: Record<string, "BTC" | "ETH" | "SOL"> = {
-  BTCUSDT: "BTC",
-  ETHUSDT: "ETH",
-  SOLUSDT: "SOL",
-};
+// ${u}USDT spot symbol → option baseCoin, for every listed option underlying.
+const IV_UNDERLYINGS: Record<string, OptionUnderlying> = Object.fromEntries(
+  OPTION_UNDERLYINGS.map((u) => [`${u}USDT`, u])
+) as Record<string, OptionUnderlying>;
 
 const r4 = (v: number) => Math.round(v * 10000) / 10000;
 const r2 = (v: number) => Math.round(v * 100) / 100;
