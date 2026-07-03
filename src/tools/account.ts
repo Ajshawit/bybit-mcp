@@ -35,9 +35,15 @@ export interface AccountStatus {
   positions: AccountPosition[];
   inverse_positions: AccountPosition[];
   spot_holdings: SpotHolding[];
+  spotDustFiltered?: number;  // count of spot holdings dropped for being below SPOT_DUST_USD_THRESHOLD
   option_positions: OptionPosition[];  // always present; empty array when none or options disabled
   accountInfo?: { uid: string; accountType: string };
 }
+
+// Spot holdings with a known USD value below this are dropped from the
+// response as noise; unknown-value holdings (usdValueAvailable: false) are
+// always kept since we can't tell whether they're dust.
+const SPOT_DUST_USD_THRESHOLD = 1;
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
 const r4 = (v: number) => Math.round(v * 10000) / 10000;
@@ -157,7 +163,7 @@ export async function handleGetAccountStatus(
   const totalOrderIM = parseFloat(usdtCoin.totalOrderIM ?? "0");
   const unrealisedPnl = parseFloat(usdtCoin.unrealisedPnl);
 
-  const spot_holdings: SpotHolding[] = account.coin
+  const allSpotHoldings: SpotHolding[] = account.coin
     .filter((c) => c.coin !== "USDT" && parseFloat(c.walletBalance) > 0)
     .map((c) => ({
       coin: c.coin,
@@ -165,6 +171,14 @@ export async function handleGetAccountStatus(
       usdValue: c.usdValue ?? "0",
       usdValueAvailable: c.usdValue != null,
     }));
+  const spot_holdings = allSpotHoldings.filter(
+    (h) => !h.usdValueAvailable || parseFloat(h.usdValue) >= SPOT_DUST_USD_THRESHOLD
+  );
+  const spotDustFiltered = allSpotHoldings.length - spot_holdings.length;
+
+  const accountInfo = queryApiRes?.uid && queryApiRes?.accountType
+    ? { uid: queryApiRes.uid, accountType: queryApiRes.accountType }
+    : null;
 
   return {
     totalEquity: parseFloat(account.totalEquity),
@@ -176,7 +190,8 @@ export async function handleGetAccountStatus(
     positions: mapPositions(linearRes.list),
     inverse_positions: mapPositions(inverseRes.list),
     spot_holdings,
+    ...(spotDustFiltered > 0 ? { spotDustFiltered } : {}),
     option_positions: mapOptionPositions(optionRes.list),
-    accountInfo: queryApiRes ? { uid: queryApiRes.uid, accountType: queryApiRes.accountType } : undefined,
+    ...(accountInfo ? { accountInfo } : {}),
   };
 }

@@ -180,6 +180,8 @@ describe("handleGetCarryAnalytics action=scan", () => {
     // -0.001 * 24 * 365 * 100 = -876
     expect(result.longPerpCollects[0].fundingAnnualizedPct).toBeCloseTo(-876, 1);
     expect(result.longPerpCollects[0].fundingIntervalHours).toBe(1);
+    // No degraded condition — the static explanatory prose is gone entirely.
+    expect(result.note).toBeUndefined();
   });
 
   it("falls back to 8h intervals with a note when instruments-info fails", async () => {

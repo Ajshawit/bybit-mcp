@@ -1,9 +1,17 @@
-import { handleGetPortfolioRisk } from "../tools/portfolio";
+import { handleGetPortfolioRisk, PortfolioRiskResult } from "../tools/portfolio";
 import { blackScholesPrice } from "../tools/options/blackscholes";
 import { BybitClient } from "../client";
 
 jest.mock("../client");
 const MockClient = BybitClient as jest.MockedClass<typeof BybitClient>;
+
+// pnlUsdGrid is indexed by position in spotShocksPct / ivShocksPts, not by
+// value — this looks a cell up by its shock values instead.
+function gridCell(result: PortfolioRiskResult, spotShockPct: number, ivShockPts: number): number {
+  const i = result.scenarios.spotShocksPct.indexOf(spotShockPct);
+  const j = result.scenarios.ivShocksPts.indexOf(ivShockPts);
+  return result.scenarios.pnlUsdGrid[i][j];
+}
 
 function linearPosition(overrides: Record<string, unknown> = {}) {
   return {
@@ -87,9 +95,9 @@ describe("handleGetPortfolioRisk — perp only", () => {
 
     // No options → IV axis collapses to [0].
     expect(result.scenarios.ivShocksPts).toEqual([0]);
-    const up10 = result.scenarios.grid.find((c) => c.spotShockPct === 10)!;
-    expect(up10.pnlUsd).toBeCloseTo(1500, 2);
-    expect(up10.pnlPctOfEquity).toBeCloseTo(15, 2);
+    const up10 = gridCell(result, 10, 0);
+    expect(up10).toBeCloseTo(1500, 2);
+    expect((up10 / result.equityUsd!) * 100).toBeCloseTo(15, 2);
     expect(result.scenarios.worstCase!.spotShockPct).toBe(-20);
     expect(result.scenarios.worstCase!.pnlUsd).toBeCloseTo(-3000, 2);
   });
@@ -110,8 +118,7 @@ describe("handleGetPortfolioRisk — perp only", () => {
     expect(result.totals.netDeltaUsd).toBe(5000);    // +15000 - 10000
     expect(result.totals.grossDeltaUsd).toBe(25000);
     expect(result.totals.concentrationPct).toBe(60); // 15000 / 25000
-    const flat = result.scenarios.grid.find((c) => c.spotShockPct === 0)!;
-    expect(flat.pnlUsd).toBe(0);
+    expect(gridCell(result, 0, 0)).toBe(0);
   });
 
   it("includes inverse perps as USD-notional delta with a warning", async () => {
@@ -137,7 +144,7 @@ describe("handleGetPortfolioRisk — perp only", () => {
     expect(result.byUnderlying).toHaveLength(0);
     expect(result.totals.netDeltaUsd).toBe(0);
     expect(result.warnings.some((w) => w.includes("No open positions"))).toBe(true);
-    expect(result.scenarios.grid.every((c) => c.pnlUsd === 0)).toBe(true);
+    expect(result.scenarios.pnlUsdGrid.every((row) => row.every((v) => v === 0))).toBe(true);
   });
 
   it("degrades gracefully when equity is unavailable", async () => {
@@ -148,7 +155,7 @@ describe("handleGetPortfolioRisk — perp only", () => {
 
     expect(result.equityUsd).toBeNull();
     expect(result.totals.leverageRatio).toBeNull();
-    expect(result.scenarios.grid[0].pnlPctOfEquity).toBeNull();
+    expect(result.scenarios.worstCase!.pnlPctOfEquity).toBeNull();
     expect(result.warnings.some((w) => w.includes("Equity unavailable"))).toBe(true);
   });
 });
@@ -174,12 +181,10 @@ describe("handleGetPortfolioRisk — with options", () => {
 
     // IV axis active, zero-shock cell exactly 0 (model-anchored repricing).
     expect(result.scenarios.ivShocksPts).toEqual([-10, 0, 10]);
-    const zero = result.scenarios.grid.find((c) => c.spotShockPct === 0 && c.ivShockPts === 0)!;
-    expect(zero.pnlUsd).toBe(0);
+    expect(gridCell(result, 0, 0)).toBe(0);
 
     // Long call: +IV is a gain, spot crash is the worst cell.
-    const ivUp = result.scenarios.grid.find((c) => c.spotShockPct === 0 && c.ivShockPts === 10)!;
-    expect(ivUp.pnlUsd).toBeGreaterThan(0);
+    expect(gridCell(result, 0, 10)).toBeGreaterThan(0);
     expect(result.scenarios.worstCase!.spotShockPct).toBe(-20);
 
     // Option chain fetched once, for BTC.
@@ -200,8 +205,7 @@ describe("handleGetPortfolioRisk — with options", () => {
 
     expect(result.warnings.some((w) => w.includes("No markIv found") && w.includes(OPTION_SYMBOL))).toBe(true);
     // Taylor: dS=0, dIV=+10pts → pnl = vega * 10 = 400.
-    const ivUp = result.scenarios.grid.find((c) => c.spotShockPct === 0 && c.ivShockPts === 10)!;
-    expect(ivUp.pnlUsd).toBeCloseTo(400, 2);
+    expect(gridCell(result, 0, 10)).toBeCloseTo(400, 2);
   });
 
   it("warns and degrades when the whole chain fetch fails", async () => {
@@ -213,8 +217,7 @@ describe("handleGetPortfolioRisk — with options", () => {
 
     expect(result.warnings.some((w) => w.includes("Option chain fetch failed for BTC"))).toBe(true);
     // No spot → vega-only scenario contribution.
-    const ivUp = result.scenarios.grid.find((c) => c.spotShockPct === 0 && c.ivShockPts === 10)!;
-    expect(ivUp.pnlUsd).toBeCloseTo(400, 2);
+    expect(gridCell(result, 0, 10)).toBeCloseTo(400, 2);
   });
 
   it("skips unparseable option symbols without dying", async () => {

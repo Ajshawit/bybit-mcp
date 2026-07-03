@@ -39,6 +39,15 @@ export function parseFiniteOr(value: string | undefined, fallback: number): numb
   return Number.isFinite(n) ? n : fallback;
 }
 
+// Significant-figure rounding for OHLC/ticker price/volume. Precision scales
+// with magnitude, so high-priced symbols (BTC ~67234.5) and sub-cent tokens
+// (PEPE ~1.2e-5) both keep meaningful digits. Fixed 2dp rounding zeroes out
+// sub-cent prices/volumes — corrupting periodLow/lastPrice and any
+// stop-placement or swing-level read on low-priced symbols. Trailing float
+// noise is still trimmed, preserving most of the token saving.
+export const sigFig = (v: number, sig = 8) =>
+  v === 0 || !Number.isFinite(v) ? v : Number(v.toPrecision(sig));
+
 export async function concurrentMap<T, R>(
   items: T[],
   limit: number,

@@ -1,4 +1,4 @@
-import { concurrentMap, floorToStep, roundToStep, isNyseOpen, parseFiniteOrThrow, parseFiniteOr } from "../util";
+import { concurrentMap, floorToStep, roundToStep, isNyseOpen, parseFiniteOrThrow, parseFiniteOr, sigFig } from "../util";
 
 describe("floorToStep", () => {
   it("floors to 3-decimal qtyStep", () => {
@@ -18,6 +18,21 @@ describe("roundToStep", () => {
   });
   it("rounds up correctly", () => {
     expect(roundToStep(29500.8, "0.5")).toBe("29501.0");
+  });
+});
+
+describe("sigFig", () => {
+  it("preserves sub-cent precision instead of zeroing it out", () => {
+    expect(sigFig(0.032891)).toBe(0.032891);
+    expect(sigFig(0.032891)).not.toBe(0);
+  });
+  it("trims float noise on high-priced symbols", () => {
+    expect(sigFig(67234.500000001)).toBe(67234.5);
+  });
+  it("passes through 0 and non-finite values unchanged", () => {
+    expect(sigFig(0)).toBe(0);
+    expect(sigFig(NaN)).toBeNaN();
+    expect(sigFig(Infinity)).toBe(Infinity);
   });
 });
 

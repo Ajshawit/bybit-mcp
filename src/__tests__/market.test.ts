@@ -62,7 +62,7 @@ describe("handleGetMarketData", () => {
     expect(result.ticker.nextFundingTime).toBe(new Date(1700000000000).toISOString());
     expect(typeof result.ticker.secondsToNextFunding).toBe("number");
     expect(result.fundingHistory).toHaveLength(2);
-    expect(result.klines["60"]).toHaveLength(2);
+    expect(result.klines!["60"]).toHaveLength(2);
     expect(result.orderbook.bestBid).toBe(29999);
     expect(result.orderbook.bestAsk).toBe(30001);
     expect(result.orderbook.bids).toBeUndefined();
@@ -104,7 +104,8 @@ describe("handleGetMarketData", () => {
 
     const calls = (client.publicGet as jest.Mock).mock.calls;
     expect(calls.some(([path]: [string]) => path.includes("kline"))).toBe(false);
-    expect(result.klines).toEqual({});
+    expect(result.klines).toBeUndefined();
+    expect("klines" in result).toBe(false);
   });
 
   it("reads funding/orderbook/OI from correctly shifted indices when includeKlines=false (linear)", async () => {
@@ -127,7 +128,7 @@ describe("handleGetMarketData", () => {
 
     const result = await handleGetMarketData(client, "BTCUSDT");
 
-    expect(result.klines).toEqual({});
+    expect(result.klines).toBeUndefined();
     expect(result.ticker.price).toBe(30000);        // ticker payload  → [0]
     expect(result.fundingHistory).toHaveLength(2);   // funding payload → [1]
     expect(result.fundingHistory[0].rate).toBe(0.0001);
@@ -590,6 +591,22 @@ describe("scan_market volume_spike", () => {
 
     const results = await handleScanMarket(client, "volume_spike", 10_000_000, 15) as any[];
     expect(results).toHaveLength(0);
+  });
+
+  it("preserves sub-cent price precision instead of rounding it to 0", async () => {
+    // Regression: a fixed Math.round on price zeroed out sub-cent tokens
+    // (e.g. a live PENGUUSDT call returned price:0). sigFig must keep
+    // significant digits for a lastPrice like "0.032891".
+    const klines = buildKlineList(1_000_000, Array(24).fill(100_000), 0.0328, 0.032891);
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce({ list: [{ ...baseTicker, symbol: "PENGUUSDT", lastPrice: "0.032891" }] })
+      .mockResolvedValueOnce(klines);
+
+    const results = await handleScanMarket(client, "volume_spike", 10_000_000, 15) as any[];
+    expect(results).toHaveLength(1);
+    expect(results[0].price).toBe(0.032891);
+    expect(results[0].price).not.toBe(0);
   });
 });
 

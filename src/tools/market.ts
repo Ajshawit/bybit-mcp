@@ -10,7 +10,7 @@ import {
   TradfiInstrumentsResult,
   AccountRatioResult,
 } from "./types";
-import { concurrentMap, isNyseOpen, NyseStatus } from "../util";
+import { concurrentMap, isNyseOpen, NyseStatus, sigFig } from "../util";
 
 export interface MarketTicker {
   symbol: string;
@@ -92,7 +92,7 @@ export interface VolumeSpikeResult {
 
 export interface MarketDataResult {
   ticker: MarketTicker;
-  klines: Record<string, MarketKlineBar[]>;
+  klines?: Record<string, MarketKlineBar[]>;
   fundingHistory: Array<{ rate: number; timestamp: number }>;
   orderbook: {
     bestBid: number;
@@ -120,15 +120,6 @@ export interface OhlcResult {
 }
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
-
-// Significant-figure rounding for OHLC price/volume. Precision scales with
-// magnitude, so high-priced symbols (BTC ~67234.5) and sub-cent tokens
-// (PEPE ~1.2e-5) both keep meaningful digits. Fixed 2dp rounding (r2) zeroes
-// out sub-cent prices/volumes — corrupting periodLow/lastPrice and any
-// stop-placement or swing-level read on low-priced symbols. Trailing float
-// noise is still trimmed, preserving most of the token saving.
-const sigFig = (v: number, sig = 8) =>
-  v === 0 || !Number.isFinite(v) ? v : Number(v.toPrecision(sig));
 
 export async function handleGetMarketData(
   client: BybitClient,
@@ -202,7 +193,13 @@ export async function handleGetMarketData(
       ? { bestBid: spotBestBid, bestAsk: spotBestAsk, spread: spotSpread, spreadPct: spotSpreadPct, midPrice: spotMid, bids: spotBids, asks: spotAsks }
       : { bestBid: spotBestBid, bestAsk: spotBestAsk, spread: spotSpread, spreadPct: spotSpreadPct, midPrice: spotMid };
 
-    return { ticker, klines, fundingHistory: [], orderbook, nyseStatus: isNyseOpen() };
+    return {
+      ticker,
+      ...(includeKlines ? { klines } : {}),
+      fundingHistory: [],
+      orderbook,
+      nyseStatus: isNyseOpen(),
+    };
   }
 
   // Linear/inverse perp path (unchanged below)
@@ -307,7 +304,7 @@ export async function handleGetMarketData(
     ? { bestBid, bestAsk, spread, spreadPct, midPrice, bids, asks }
     : { bestBid, bestAsk, spread, spreadPct, midPrice };
 
-  return { ticker, klines, fundingHistory, orderbook };
+  return { ticker, ...(includeKlines ? { klines } : {}), fundingHistory, orderbook };
 }
 
 export async function handleGetOhlc(
@@ -586,7 +583,7 @@ async function scanOiDivergence(
 
       return {
         symbol: t.symbol,
-        price: ri(parseFloat(t.lastPrice)),
+        price: sigFig(parseFloat(t.lastPrice)),
         price24hPct: r2(price24hPct),
         price4hPct: r2(price4hPct),
         oi24hPct: r2(oi24hPct),
@@ -663,7 +660,7 @@ async function scanCrowdedPositioning(
 
       return {
         symbol: t.symbol,
-        price: ri(price),
+        price: sigFig(price),
         fundingRate: funding,
         fundingRateAnnualized: r2(funding * epochsPerDay * 365 * 100),
         funding8hAgo: fl[idx8h] ? parseFloat(fl[idx8h].fundingRate) : null,
@@ -729,7 +726,7 @@ async function scanVolumeSpike(
 
       return {
         symbol: t.symbol,
-        price: ri(parseFloat(t.lastPrice)),
+        price: sigFig(parseFloat(t.lastPrice)),
         hourChangePct: r2(hourChangePct),
         currentHourVolumeUsd: ri(currentHourVol),
         avg24hHourlyVolumeUsd: ri(avgPriorVol),
@@ -805,7 +802,7 @@ async function scanAccountRatio(
 
       return {
         symbol: t.symbol,
-        price: ri(parseFloat(t.lastPrice)),
+        price: sigFig(parseFloat(t.lastPrice)),
         longShortRatio: r2(ratio),
         longAccountPct: r2(parseFloat(rl[0].buyRatio) * 100),
         longShortRatio24hAgo: prevRatio !== null ? r2(prevRatio) : null,
@@ -868,9 +865,5 @@ export async function handleListTradfiInstruments(
   const stock_perps = filterBySearch(stockPerpsRes.list.map((r) => mapInstrument(r, "stock_perp")));
   const commodity_perps = filterBySearch(commodityPerpsRes.list.map((r) => mapInstrument(r, "commodity_perp")));
 
-  const hasAny = xstocks.length > 0 || stock_perps.length > 0 || commodity_perps.length > 0;
-  const dataNote = hasAny
-    ? "Signal quality note: all TradFi prices are index-derived and track the real market. Volume figures (volume24h, turnover24h) reflect Bybit's TradFi market only — not real NYSE/CME volume. For stock/commodity perps, funding rate and open interest are also Bybit-specific and do not reflect real-world institutional flows or options OI. Use these as Bybit positioning indicators only."
-    : undefined;
-  return { xstocks, stock_perps, commodity_perps, total: xstocks.length + stock_perps.length + commodity_perps.length, dataNote };
+  return { xstocks, stock_perps, commodity_perps, total: xstocks.length + stock_perps.length + commodity_perps.length };
 }

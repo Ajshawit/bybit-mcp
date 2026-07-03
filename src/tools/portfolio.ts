@@ -80,9 +80,9 @@ export interface PortfolioRiskResult {
   scenarios: {
     spotShocksPct: number[];
     ivShocksPts: number[];
-    grid: ScenarioCell[];
+    gridFormat: string;
+    pnlUsdGrid: number[][];
     worstCase: ScenarioCell | null;
-    note: string;
   };
   warnings: string[];
 }
@@ -328,8 +328,10 @@ export async function handleGetPortfolioRisk(
     ? validateShocks(params.ivShocksPts, DEFAULT_IV_SHOCKS_PTS, "ivShocksPts")
     : [0];
 
-  const grid: ScenarioCell[] = [];
+  const pnlUsdGrid: number[][] = [];
+  let worstCase: ScenarioCell | null = null;
   for (const s of spotShocks) {
+    const row: number[] = [];
     for (const v of ivShocks) {
       let pnl = 0;
       // Linear perps are linear in spot — delta×shock is exact. Inverse is
@@ -344,17 +346,18 @@ export async function handleGetPortfolioRisk(
           pnl += o.vega * v;
         }
       }
-      grid.push({
+      const pnlUsd = r2(pnl);
+      row.push(pnlUsd);
+      const cell: ScenarioCell = {
         spotShockPct: s,
         ivShockPts: v,
-        pnlUsd: r2(pnl),
+        pnlUsd,
         pnlPctOfEquity: equityUsd !== null && equityUsd > 0 ? r2((pnl / equityUsd) * 100) : null,
-      });
+      };
+      if (worstCase === null || cell.pnlUsd < worstCase.pnlUsd) worstCase = cell;
     }
+    pnlUsdGrid.push(row);
   }
-  const worstCase = grid.length > 0
-    ? grid.reduce((w, c) => (c.pnlUsd < w.pnlUsd ? c : w))
-    : null;
 
   if (perps.length === 0 && options.length === 0) {
     warnings.push("No open positions — portfolio risk is flat.");
@@ -375,12 +378,9 @@ export async function handleGetPortfolioRisk(
     scenarios: {
       spotShocksPct: spotShocks,
       ivShocksPts: ivShocks,
-      grid,
+      gridFormat: "pnlUsdGrid[i][j] = PnL USD at spotShocksPct[i], ivShocksPts[j]",
+      pnlUsdGrid,
       worstCase,
-      note:
-        "Instantaneous shock: options repriced via Black-Scholes at shocked spot/IV with time held " +
-        "constant (no theta decay applied); zero-shock cell is 0 by construction. Spot shocks move " +
-        "every underlying simultaneously (worst case assumes correlation 1).",
     },
     warnings,
   };

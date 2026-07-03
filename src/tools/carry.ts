@@ -82,7 +82,6 @@ export interface BasisResult {
     rate: number;
     annualizedPct: number;
     premiumAvg: number;
-    estimateNote: string;
   } | null;
   spot: {
     price: number;
@@ -93,7 +92,6 @@ export interface BasisResult {
     daysToDelivery: number;
     annualizedBasisPct: number | null; // (mark/index - 1) * 365/DTE
   } | null;
-  carryNote: string;
 }
 
 export interface CarryScanRow {
@@ -110,12 +108,8 @@ export interface CarryScanResult {
   action: "scan";
   shortPerpCollects: CarryScanRow[];  // positive funding: short perp + long spot earns
   longPerpCollects: CarryScanRow[];   // negative funding: long perp earns
-  note: string;
+  note?: string;  // only set when a runtime condition degrades the scan (e.g. missing funding intervals)
 }
-
-const CARRY_NOTE =
-  "Positive funding: longs pay shorts — short perp (hedged with spot) collects it. " +
-  "Negative funding: shorts pay longs. Annualized figures assume the current rate persists.";
 
 export async function handleGetCarryAnalytics(
   client: BybitClient,
@@ -193,9 +187,6 @@ async function basisForSymbol(client: BybitClient, symbol: string): Promise<Basi
         rate,
         annualizedPct: r2(annualizedFundingPct(rate, intervalMinutes)),
         premiumAvg,
-        estimateNote:
-          "Estimate from average premium index over the last funding interval using Bybit's " +
-          "formula (premium + clamped interest). The actual print uses Bybit's own TWAP window.",
       };
     }
   } catch {
@@ -248,7 +239,6 @@ async function basisForSymbol(client: BybitClient, symbol: string): Promise<Basi
     predictedFunding,
     spot,
     datedFuture,
-    carryNote: CARRY_NOTE,
   };
 }
 
@@ -300,8 +290,13 @@ async function carryScan(
     .slice(0, limit);
 
   const note = instrumentsRes
-    ? CARRY_NOTE
-    : `${CARRY_NOTE} Funding intervals unavailable — assumed 8h for all symbols.`;
+    ? undefined
+    : "Funding intervals unavailable — assumed 8h for all symbols.";
 
-  return { action: "scan", shortPerpCollects, longPerpCollects, note };
+  return {
+    action: "scan",
+    shortPerpCollects,
+    longPerpCollects,
+    ...(note ? { note } : {}),
+  };
 }

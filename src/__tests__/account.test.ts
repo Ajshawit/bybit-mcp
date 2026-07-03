@@ -37,6 +37,23 @@ const mockInversePositions = {
 
 const emptyPositions = { list: [], category: "inverse" };
 
+// BTC has a real usdValue above the dust threshold; DUST is below it and
+// should be filtered; UNKNOWNVAL has no usdValue at all (unavailable, not
+// dust) and must be retained even though we can't price it.
+const mockWalletBalanceWithDust = {
+  list: [{
+    accountType: "UNIFIED",
+    totalEquity: "500.00",
+    totalMaintenanceMargin: "10.00",
+    coin: [
+      { coin: "USDT", walletBalance: "200.00", totalPositionIM: "50.00", unrealisedPnl: "5.00", equity: "205.00", locked: "0" },
+      { coin: "BTC", walletBalance: "0.5", totalPositionIM: "0", unrealisedPnl: "0", equity: "0.5", locked: "0", usdValue: "25000" },
+      { coin: "DUST", walletBalance: "0.0001", totalPositionIM: "0", unrealisedPnl: "0", equity: "0.0001", locked: "0", usdValue: "0.02" },
+      { coin: "UNKNOWNVAL", walletBalance: "10", totalPositionIM: "0", unrealisedPnl: "0", equity: "10", locked: "0" },
+    ],
+  }],
+};
+
 describe("handleGetAccountStatus", () => {
   it("computes freeCapital as walletBalance - totalPositionIM", async () => {
     const client = new MockClient("key", "secret", "url");
@@ -144,6 +161,61 @@ describe("handleGetAccountStatus", () => {
     expect(result.accountInfo).toBeDefined();
     expect(result.accountInfo!.uid).toBe("12345678");
     expect(result.accountInfo!.accountType).toBe("UNIFIED");
+  });
+
+  it("omits accountInfo when query-api resolves to an empty object", async () => {
+    const client = new MockClient("key", "secret", "url");
+    (client.signedGet as jest.Mock)
+      .mockResolvedValueOnce(mockWalletBalance)
+      .mockResolvedValueOnce(emptyPositions)
+      .mockResolvedValueOnce(emptyPositions)
+      .mockResolvedValueOnce({}); // query-api succeeded but returned no uid/accountType
+
+    const result = await handleGetAccountStatus(client);
+
+    expect(result.accountInfo).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(result, "accountInfo")).toBe(false);
+  });
+
+  it("filters dust spot holdings below the USD threshold and reports the count", async () => {
+    const client = new MockClient("key", "secret", "url");
+    (client.signedGet as jest.Mock)
+      .mockResolvedValueOnce(mockWalletBalanceWithDust)
+      .mockResolvedValueOnce(mockLinearPositions)
+      .mockResolvedValueOnce(emptyPositions);
+
+    const result = await handleGetAccountStatus(client);
+
+    const coins = result.spot_holdings.map((h) => h.coin);
+    expect(coins).not.toContain("DUST");
+    expect(coins).toContain("BTC");
+    expect(result.spotDustFiltered).toBe(1);
+  });
+
+  it("retains a spot holding with unavailable usdValue even though it's small", async () => {
+    const client = new MockClient("key", "secret", "url");
+    (client.signedGet as jest.Mock)
+      .mockResolvedValueOnce(mockWalletBalanceWithDust)
+      .mockResolvedValueOnce(mockLinearPositions)
+      .mockResolvedValueOnce(emptyPositions);
+
+    const result = await handleGetAccountStatus(client);
+
+    const unknown = result.spot_holdings.find((h) => h.coin === "UNKNOWNVAL");
+    expect(unknown).toBeDefined();
+    expect(unknown!.usdValueAvailable).toBe(false);
+  });
+
+  it("omits spotDustFiltered when nothing was filtered", async () => {
+    const client = new MockClient("key", "secret", "url");
+    (client.signedGet as jest.Mock)
+      .mockResolvedValueOnce(mockWalletBalance)
+      .mockResolvedValueOnce(mockLinearPositions)
+      .mockResolvedValueOnce(emptyPositions);
+
+    const result = await handleGetAccountStatus(client);
+
+    expect(result.spotDustFiltered).toBeUndefined();
   });
 
   // One unparseable option symbol must never take down the whole account

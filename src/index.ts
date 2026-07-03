@@ -39,6 +39,7 @@ import type {
 import { readFileSync } from "fs";
 import { join } from "path";
 import { resolveBaseUrl, isEnvEnabled, TESTNET_URL } from "./config";
+import { sigFig } from "./util";
 import { createSampleFileStore } from "./storage";
 import { assertBooleanFlag, assertOneOf } from "./tools/confirm";
 
@@ -74,12 +75,12 @@ function createServer(
     tools: [
       {
         name: "get_account_status",
-        description: "Get current account balance, free capital, margin in use, unrealised PnL, and all open positions. Returns three position arrays: `positions` (linear USDT perps), `inverse_positions` (coin-margined perps), and `spot_holdings` (non-USDT spot balances with USD value). Each position includes entry price, mark price, PnL%, SL, TP, trailing stop, and liquidation price. When options are enabled, also returns `option_positions` (open option contracts with Greeks, premiumFlow, unrealisedPnl, daysToExpiry, and breakeven). spot_holdings includes xStock token balances (e.g. coin='TSLAX') and any stablecoin balance used for xStock trading. accountInfo returns the API key's UID and account type so you can confirm which Bybit sub-account this MCP is keyed to.",
+        description: "Account balance, free capital, margin in use, unrealised PnL, and all open positions (linear perps, inverse perps, spot holdings incl. xStock tokens; option positions with Greeks when enabled). accountInfo reports the API key's UID and account type.",
         inputSchema: { type: "object" as const, properties: {}, required: [] },
       },
       {
         name: "get_market_data",
-        description: "Get comprehensive market data for a symbol — current price, mark price, ticker, spread, orderbook depth, funding rate, open interest (klines only when includeKlines=true — use get_ohlc for candle history). For linear perpetuals (crypto perps, stock perps e.g. TSLAPUSDT, commodity perps e.g. XAUUSDT): full funding/OI data. For xStock tokens (category=spot, e.g. TSLAXUSDT): price, orderbook, and NYSE market hours status — funding/OI fields are omitted. Use list_tradfi_instruments to discover available TradFi symbols.",
+        description: "Market snapshot for one symbol: price, ticker, spread, orderbook summary, funding rate, open interest. Use get_ohlc for candle history and list_tradfi_instruments to discover TradFi symbols.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -87,7 +88,7 @@ function createServer(
             category: {
               type: "string",
               enum: ["linear", "spot"],
-              description: "linear (default) for crypto perps, stock perps (e.g. TSLAPUSDT), commodity perps (e.g. XAUUSDT). spot for xStock tokens (e.g. TSLAXUSDT) — returns price, orderbook and NYSE market hours status instead of funding/OI (klines only when includeKlines=true).",
+              description: "linear (default) for crypto, stock (e.g. TSLAPUSDT), and commodity (e.g. XAUUSDT) perps — full funding/OI. spot for xStock tokens (e.g. TSLAXUSDT) — price, orderbook, and NYSE market-hours status; funding/OI omitted.",
             },
             klineIntervals: { type: "array", items: { type: "string" }, description: "Kline intervals e.g. [\"60\",\"240\"]. Default: [\"60\",\"240\"]" },
             klineLimit: { type: "number", description: "Number of candles per interval. Default: 24" },
@@ -100,7 +101,7 @@ function createServer(
       },
       {
         name: "scan_market",
-        description: "Scan all linear perpetuals for a specific market condition. Returns raw numbers and short machine-readable tags. Filters: oi_divergence (price/OI divergence signals), crowded_positioning (extreme funding + range, with fundingZScore vs the trailing ~200-epoch history), volume_spike (unusual hourly volume), account_ratio (retail crowding: long/short account ratio >= 2 or <= 0.5 from /v5/market/account-ratio, with the 24h-ago ratio and fundingZScore — contrarian signal when crowding and funding stretch together).",
+        description: "Scan all linear perpetuals for one condition; returns raw numbers and machine-readable tags. Filters: oi_divergence (price/OI divergence), crowded_positioning (extreme funding + range, with fundingZScore vs ~200-epoch history), volume_spike (unusual hourly volume), account_ratio (retail long/short crowding ≥2 or ≤0.5 — contrarian when crowding and funding stretch together).",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -113,7 +114,7 @@ function createServer(
       },
       {
         name: "get_ohlc",
-        description: "Fetch OHLC for any symbol/category. Default: summary only (lastPrice, count, periodHigh, periodLow). Set includeCandles=true for the series — candleFormat=tuples (default) returns compact [t,o,h,l,c,v] arrays; objects returns named fields. candles[0] is newest. Use get_market_data for ticker/funding/OI without candles.",
+        description: "OHLC for any symbol/category. Default: summary only (lastPrice, count, periodHigh, periodLow); set includeCandles=true for the series, newest first. Use get_market_data for ticker/funding/OI without candles.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -135,21 +136,21 @@ function createServer(
               description: "Number of candles to return. Default: 100",
             },
             includeCandles: { type: "boolean", description: "Return the candle series. Default: false (summary stats only)." },
-            candleFormat: { type: "string", enum: ["tuples", "objects"], description: "When includeCandles=true: tuples (default) or objects." },
+            candleFormat: { type: "string", enum: ["tuples", "objects"], description: "When includeCandles=true: tuples (default) = compact [t,o,h,l,c,v] arrays; objects = named fields." },
           },
           required: ["symbol"],
         },
       },
       {
         name: "get_market_regime",
-        description: "BTC trend (SMA20/SMA50) + aggregate funding sentiment across top-20 linear perps by volume. Returns a synthesised regime label (risk_on / risk_off / choppy) plus raw signals. Use timeframe='swing' (default, 4h bars, ~1-2 week horizon) for session positioning, or timeframe='macro' (daily bars, ~2-3 month horizon) for structural bias. regime is BTC trend-based — does not capture alt/BTC divergence. Throws if Bybit returns fewer than 50 candles.",
+        description: "BTC trend (SMA20/SMA50) + aggregate funding sentiment across top-20 linear perps by volume, synthesised into a regime label (risk_on / risk_off / choppy) plus raw signals. BTC trend-based — does not capture alt/BTC divergence.",
         inputSchema: {
           type: "object" as const,
           properties: {
             timeframe: {
               type: "string",
               enum: ["intraday", "swing", "macro"],
-              description: "Trend resolution. Default: swing (4h bars, ~1-2 week horizon)",
+              description: "Trend resolution: intraday (1h bars), swing (4h bars, ~1-2 week horizon), macro (daily bars, ~2-3 month horizon). Default: swing",
             },
           },
           required: [],
@@ -157,7 +158,7 @@ function createServer(
       },
       {
         name: "get_volatility",
-        description: "Realized-volatility analytics for any symbol. Returns three annualized RV estimators over a recent window (closeToClose, parkinson high-low, yangZhang), plus a vol cone — current RV vs its own min/p25/median/p75/max across 1d/3d/7d/14d/30d horizons over the fetched history. When options are enabled and symbol is BTCUSDT/ETHUSDT/SOLUSDT/XAUTUSDT/XRPUSDT/MNTUSDT/DOGEUSDT, also returns the ATM IV from the expiry nearest the RV window with ivMinusRv (positive = implied rich vs realized — the variance-risk-premium signal for vol selling/buying decisions). All volatilities are annualized decimals (0.45 = 45%), same convention as option markIv.",
+        description: "Realized-vol analytics: three annualized RV estimators (closeToClose, parkinson, yangZhang) plus a vol cone (current RV vs its own 1d-30d history). For option underlyings (options enabled), adds ATM IV and ivMinusRv (positive = implied rich — the variance-risk-premium signal). Vols are annualized decimals (0.45 = 45%).",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -177,7 +178,7 @@ function createServer(
       },
       {
         name: "get_carry_analytics",
-        description: "Basis and funding-carry analytics. action='basis' (requires symbol): perp mark-vs-index basis, current + realized funding annualized, PREDICTED next funding estimated from the premium index via Bybit's formula, perp-vs-spot basis when a spot market exists, and annualized basis for dated futures. action='scan': rank all linear perps by annualized funding carry — shortPerpCollects (positive funding: short perp hedged with spot earns it) and longPerpCollects (negative funding: long perp earns) — using each symbol's real funding interval (1h/2h/4h/8h). Use for delta-neutral carry trades and funding-arb candidate discovery.",
+        description: "Basis and funding-carry analytics. action='basis' (requires symbol): mark-vs-index basis, current/realized/predicted funding annualized, perp-vs-spot and dated-futures basis. action='scan': rank linear perps by annualized funding carry each side, using real funding intervals. For delta-neutral carry and funding-arb discovery.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -191,7 +192,7 @@ function createServer(
       },
       {
         name: "get_portfolio_risk",
-        description: "Portfolio-level risk aggregation and scenario stress test. Sums delta across ALL open positions (linear perps, inverse perps, and options when enabled) grouped by underlying — perp delta in USD, option Greeks (delta/gamma/vega/theta) from Bybit position data — and reports totals: net & gross delta USD, vega per 1 IV pt, theta/day, gross notional, leverage ratio, concentration. Then shocks spot (default ±5/10/20%) × IV (default ±10 pts, options only) and returns a PnL grid with the worst-case cell, repricing options via Black-Scholes (time held constant). Use to answer 'what is my real net exposure and what does a -20% gap do to the account?'",
+        description: "Portfolio risk across ALL open positions (linear, inverse, options when enabled): per-underlying delta USD and Greeks, totals (net/gross delta, vega, theta/day, leverage, concentration), and a spot × IV shock PnL grid with the worst-case cell — options repriced via Black-Scholes at constant time, all underlyings shocked together.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -203,7 +204,7 @@ function createServer(
       },
       {
         name: "estimate_execution_cost",
-        description: "Pre-trade execution cost estimate from deep orderbook data (500 levels for perps, 200 for spot). Walks the book for your size and returns expected average fill price, slippage vs mid (bps), worst-level slippage, book imbalance (bid/ask depth ratio), taker/maker fees from your account's actual fee tier, the all-in cost (slippage + taker fee, bps), and the max size executable within maxSlippageBps. Run this before place_trade to answer 'is this order too big for this book?' — a bookExhausted warning means the order would sweep the entire visible book. Specify size as qty (base units; USD contracts for inverse) or notionalUsd.",
+        description: "Pre-trade cost estimate from deep orderbook data: expected fill price, slippage vs mid (bps), book imbalance, real fee-tier taker/maker fees, all-in cost, and max size executable within maxSlippageBps. Run before place_trade; a bookExhausted warning means the order would sweep the visible book.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -220,7 +221,7 @@ function createServer(
       },
       {
         name: "get_event_calendar",
-        description: "Upcoming market events in one call: next funding time + rate per symbol (defaults to your open-position symbols, else BTC/ETH majors), option expiry schedule per underlying with contract count and open-interest notional by date (when options are enabled), dated-futures delivery dates, and current NYSE session status (relevant for xStocks/stock perps). Use for timing decisions — e.g. avoid paying an imminent funding print, or know how much OI expires Friday.",
+        description: "Upcoming market events in one call: next funding time + rate per symbol, option expiry schedule with OI notional by date (when options are enabled), dated-futures deliveries, and current NYSE session status. Use for timing decisions — imminent funding prints, expiry-day OI.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -232,7 +233,7 @@ function createServer(
       },
       {
         name: "calculate_position_size",
-        description: "Position sizing calculator — pure advisory math, no order is placed. method='risk_per_trade': quantity whose loss at your stop equals a USD risk budget (riskUsd, or riskPctEquity — default 1% of equity). method='kelly': fractional Kelly (default 0.25× full Kelly) from win/loss stats — pass winRate/avgWinUsd/avgLossUsd explicitly or omit all three to derive them from recent closed trades. method='vol_target': size so the position contributes targetAnnualVolPct of annualized volatility on equity (realized vol from ~7 days of hourly bars). Output qty is floored to the instrument qty step (base units; USD contracts for inverse) plus notional, realized risk at the rounded qty, margin at your leverage, and a liquidation-distance check: estimated liq price vs your stop and the max leverage that keeps liquidation safely beyond the stop (10% buffer). Run before place_trade to turn a risk budget into an order quantity.",
+        description: "Position sizing calculator — advisory math only, no order placed. method='risk_per_trade': qty whose loss at your stop equals a USD or %-equity budget. 'kelly': fractional Kelly from win/loss stats (explicit or from closed trades). 'vol_target': size to a target annualized vol contribution. Returns qty floored to the instrument step, notional, margin, and a liquidation-distance check vs your stop. Run before place_trade.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -257,7 +258,7 @@ function createServer(
       },
       {
         name: "analyze_pair",
-        description: "Pairs / stat-arb toolkit: relate any symbol to a benchmark (default BTCUSDT) over shared kline history. Returns log-return correlation (full sample + recent window) and beta — the OLS hedge ratio, with hedgeNotionalUsdPer1kUsd telling you how much benchmark notional hedges $1k of the symbol; the pair log-spread (ln(symbol) − h·ln(benchmark)) with its z-score vs the fetched history and a signal tag (spread_rich / spread_cheap at |z| ≥ 2, else neutral); and an AR(1) mean-reversion half-life estimate in bars/hours/days (null when the spread is trending, not mean-reverting). Series are aligned on shared timestamps. Use for hedge sizing, alt/BTC divergence, and pair-trade entry timing.",
+        description: "Pairs/stat-arb toolkit vs a benchmark (default BTCUSDT): log-return correlation (full + recent), OLS hedge-ratio beta with hedge notional per $1k, log-spread z-score with signal tag (spread_rich/spread_cheap at |z| ≥ 2), and AR(1) mean-reversion half-life (null when trending). For hedge sizing, alt/BTC divergence, and pair-trade timing.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -277,7 +278,7 @@ function createServer(
       },
       {
         name: "get_performance_stats",
-        description: "Closed-trade performance analytics over an arbitrary lookback (default 30 days, max 180) — aggregates /v5/position/closed-pnl across Bybit's 7-day query windows with pagination (cap 1000 trades, newest kept). Returns win rate, profit factor, expectancy, average/largest win and loss, payoff ratio; annualized Sharpe and Sortino computed on the daily USD PnL series (scale-dependent — not comparable to return-based ratios or across account sizes); max drawdown on the cumulative PnL curve; per-symbol attribution sorted by total PnL; long-vs-short breakdown; and hold-time stats. Use for 'how is my trading actually going?' reviews and as the stats source for calculate_position_size method='kelly'.",
+        description: "Closed-trade performance over a lookback (default 30d, max 180; cap 1000 trades): win rate, profit factor, expectancy, payoff ratio, Sharpe/Sortino on daily USD PnL (scale-dependent), max drawdown, per-symbol attribution, long/short and hold-time stats. Stats source for calculate_position_size method='kelly'.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -290,14 +291,14 @@ function createServer(
       },
       {
         name: "place_trade",
-        description: "Place a trade on a Bybit linear perp, inverse perp, or spot market. Supports market, limit, and conditional/stop entry orders (pass `triggerPrice` to create a stop-market or stop-limit entry — e.g. breakout long: side=Buy, triggerPrice above current price). For inverse perps the `margin` field is in base coin units (e.g. BTC for BTCUSD). CONFIRMATION REQUIRED: (1) Present the full trade plan — symbol, category, side, margin, leverage (perps), SL (perps), TP, estimated position size. (2) Wait for the user to reply with 'CONFIRM'. (3) Only call this tool after receiving explicit CONFIRM. Never call this tool in the same turn as presenting the trade plan. Recommended workflow: present plan → CONFIRM → call with dry_run=true → verify computedQty, notional, and warnings → call again with dry_run=false. The dry_run call does not require a second CONFIRM. If dry_run returns wouldSubmit: false, do not proceed without addressing the warnings. TradFi: xStock tokens use category=spot (e.g. TSLAXUSDT — tokenized equities, no leverage or SL required). Stock perpetuals and commodity perpetuals use category=linear (e.g. TSLAPUSDT for TSLA perp, XAUUSDT for gold). Call list_tradfi_instruments to confirm the exact symbol before the first TradFi trade in a session.",
+        description: "Place a trade on a Bybit linear perp, inverse perp, or spot market — market, limit, or conditional/stop entry (pass `triggerPrice`). CONFIRMATION REQUIRED: (1) Present the full trade plan — symbol, category, side, margin, leverage (perps), SL (perps), TP, estimated position size. (2) Wait for the user to reply with 'CONFIRM'. (3) Only call this tool after receiving explicit CONFIRM. Never call this tool in the same turn as presenting the trade plan. Recommended workflow: present plan → CONFIRM → call with dry_run=true → verify computedQty, notional, and warnings → call again with dry_run=false. The dry_run call does not require a second CONFIRM. If dry_run returns wouldSubmit: false, do not proceed without addressing the warnings.",
         inputSchema: {
           type: "object" as const,
           properties: {
             symbol: { type: "string", description: "Symbol e.g. BTCUSDT, BTCUSD" },
             side: { type: "string", enum: ["Buy", "Sell"] },
             margin: { type: "number", description: "Margin to allocate. USDT for linear/spot; base coin (e.g. BTC) for inverse." },
-            category: { type: "string", enum: ["linear", "inverse", "spot", "spot_margin"], description: "Default: linear (futures/perp). Pass 'spot' or 'spot_margin' if the user intends to own the asset rather than hold a perp position." },
+            category: { type: "string", enum: ["linear", "inverse", "spot", "spot_margin"], description: "Default: linear (crypto/stock/commodity perps, e.g. TSLAPUSDT, XAUUSDT). 'spot'/'spot_margin' to own the asset — incl. xStock tokens (e.g. TSLAXUSDT; no leverage/SL). Confirm TradFi symbols via list_tradfi_instruments first." },
             orderType: { type: "string", enum: ["Market", "Limit"], description: "Default: Market" },
             price: { type: "number", description: "Required for Limit orders. Limit entry price." },
             leverage: { type: "number", description: "Required for linear/inverse. Ignored for spot." },
@@ -305,11 +306,11 @@ function createServer(
             tp: { type: "number", description: "Take profit price. Optional, perps only." },
             trailingStop: { type: "number", description: "Trailing stop distance in quote currency. Optional, perps only." },
             trailingActivatePrice: { type: "number", description: "Price at which trailing stop activates. Optional, perps only." },
-            triggerPrice: { type: "number", description: "Optional. Turns the order into a conditional/stop entry — the order rests until last/mark/index price crosses this level, then submits as the chosen orderType (Market = stop-market, Limit = stop-limit). Use for breakout/breakdown setups." },
-            triggerBy: { type: "string", enum: ["LastPrice", "MarkPrice", "IndexPrice"], description: "Which price feed the trigger watches. Default: LastPrice. Perps only — Bybit defines this for linear/inverse; ignored for spot conditionals." },
-            triggerDirection: { type: "number", enum: [1, 2], description: "1 = trigger when price rises to triggerPrice; 2 = falls to. Auto-derived from triggerPrice vs current market price if omitted. Perps only — ignored for spot conditionals." },
+            triggerPrice: { type: "number", description: "Makes the order a conditional/stop entry: rests until price crosses this level, then submits as orderType (Market = stop-market, Limit = stop-limit). For breakout/breakdown setups." },
+            triggerBy: { type: "string", enum: ["LastPrice", "MarkPrice", "IndexPrice"], description: "Price feed the trigger watches. Default: LastPrice. Perps only; ignored for spot." },
+            triggerDirection: { type: "number", enum: [1, 2], description: "1 = trigger on rise to triggerPrice; 2 = on fall. Auto-derived if omitted. Perps only; ignored for spot." },
             notes: { type: "string", description: "Trade rationale — echoed back in response" },
-            dry_run: { type: "boolean", description: "If true, returns computed order details without submitting. Default: false. executionPrice in the result is the current last-traded price, not a slippage-adjusted estimate — actual fill may differ." },
+            dry_run: { type: "boolean", description: "If true, returns computed order details without submitting. Default: false. executionPrice is the current last price, not a slippage-adjusted estimate." },
             confirm: { type: "string", description: "Must equal the literal string 'CONFIRM' (case-sensitive, no whitespace) to submit live. Validated server-side at call time. Omit when dry_run=true." },
           },
           // Conditional requirements (price for Limit; leverage+sl for perps)
@@ -321,7 +322,7 @@ function createServer(
       },
       {
         name: "close_position",
-        description: "Close an open position (fully or partially). Perp/inverse default to Market close; pass orderType='Limit' + price to layer reduce-only take-profit ladders (the order stays reduceOnly:true, so it can only shrink the position). Spot is Market-only — sells from total wallet balance for the base coin; use `qty` to specify exact amount if you hold the coin from sources outside this MCP. CONFIRMATION REQUIRED: (1) Present the close plan — symbol, category, side, orderType, size, price (if Limit), rationale. (2) Wait for the user to reply with 'CONFIRM'. (3) Only call this tool after receiving explicit CONFIRM. Never call this tool in the same turn as proposing the close.",
+        description: "Close an open position (fully or partially). Perp/inverse default to Market close; orderType='Limit' + price places reduce-only take-profit ladders. Spot is Market-only — sells from total wallet balance; pass `qty` for an exact amount. CONFIRMATION REQUIRED: (1) Present the close plan — symbol, category, side, orderType, size, price (if Limit), rationale. (2) Wait for the user to reply with 'CONFIRM'. (3) Only call this tool after receiving explicit CONFIRM. Never call this tool in the same turn as proposing the close.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -330,8 +331,8 @@ function createServer(
             category: { type: "string", enum: ["linear", "inverse", "spot", "spot_margin"], description: "Default: linear" },
             percent: { type: "number", description: "Percentage to close (1-100). Default: 100. Ignored if qty provided." },
             qty: { type: "number", description: "Explicit close quantity in base coin. Overrides percent." },
-            orderType: { type: "string", enum: ["Market", "Limit"], description: "Default: Market. Use Limit for layered take-profit ladders at specific prices — perp/inverse only. The order stays reduceOnly:true, so it can only shrink the position, never accidentally open a new one." },
-            price: { type: "number", exclusiveMinimum: 0, description: "Required when orderType=Limit. The limit price for the reduce-only close order. Must be > 0." },
+            orderType: { type: "string", enum: ["Market", "Limit"], description: "Default: Market. Limit = layered take-profit at a specific price, perp/inverse only; the order is reduceOnly:true so it can only shrink the position." },
+            price: { type: "number", exclusiveMinimum: 0, description: "Required when orderType=Limit. Limit price for the reduce-only close. Must be > 0." },
             notes: { type: "string", description: "Rationale — echoed back in response" },
             dry_run: { type: "boolean", description: "If true, returns the computed close (closeQty, remainingSize) without submitting. No confirm needed. Default: false." },
             confirm: { type: "string", description: "Must equal the literal string 'CONFIRM' (case-sensitive, no whitespace). Validated server-side at call time." },
@@ -366,7 +367,7 @@ function createServer(
       },
       {
         name: "list_open_orders",
-        description: "List all resting (unfilled) orders. Returns entry price, size, SL, TP, trailing stop, activation price, fill status, and orderId for each order. Use before cancel_order to look up the orderId of an order you want to cancel.",
+        description: "List all resting (unfilled) orders with price, size, SL/TP, fill status, and orderId. Use before cancel_order to look up the orderId.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -394,7 +395,7 @@ function createServer(
       },
       {
         name: "get_closed_trades",
-        description: "Fetch realised P&L for recently closed perp positions (linear or inverse). Each trade includes avgEntryPrice, avgExitPrice, closedPnl, fees-net P&L, leverage used, hold duration in seconds, and pnlPct. Use for post-trade journaling and review without manually reconstructing from account-status deltas. Bybit retains up to 7 days by default; use startTime/endTime (ms epoch) to narrow.",
+        description: "Realised P&L for recently closed perp positions (linear or inverse): entry/exit averages, closedPnl, fees-net P&L, leverage, hold duration, pnlPct. Use for post-trade journaling. Bybit retains up to 7 days by default; use startTime/endTime to narrow.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -409,7 +410,7 @@ function createServer(
       },
       {
         name: "list_tradfi_instruments",
-        description: "Discover available TradFi instruments on Bybit. Returns xStocks (tokenized equities e.g. TSLAXUSDT — trade with category=spot), stock perpetuals (e.g. TSLAPUSDT — trade with category=linear), and commodity perpetuals (e.g. XAUUSDT gold, XAGUSDT silver, CLUSDT crude oil — trade with category=linear). Always call this before the first TradFi trade in a session to confirm exact symbols and constraints (tickSize, minOrderQty, maxLeverage). Note: stock perps and xStocks trade on Bybit around the clock but underlying equity prices only move during NYSE hours (09:30–16:00 ET, Mon–Fri). Use get_market_data with category=spot on xStock symbols to get real-time NYSE session status. Signal caveat: volume figures for all TradFi instruments reflect Bybit's market only — not real NYSE/CME volume. Funding rate and OI on stock/commodity perps are also Bybit-specific. The response includes a dataNote field repeating this.",
+        description: "Discover Bybit TradFi instruments and constraints (tickSize, minOrderQty, maxLeverage): xStocks (tokenized equities e.g. TSLAXUSDT, category=spot), stock perps (e.g. TSLAPUSDT) and commodity perps (e.g. XAUUSDT), category=linear. Call before the first TradFi trade in a session. These markets trade 24/7 but underlying equities move only during NYSE hours; volume/funding/OI are Bybit-market-only positioning indicators, not real NYSE/CME flows.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -428,7 +429,7 @@ function createServer(
       ...(ENABLE_OPTIONS ? [
         {
           name: "options_market",
-          description: "Options market data — four actions. action='chain': browse contracts for BTC/ETH/SOL/XAUT/XRP/MNT/DOGE, returns contracts[]. action='quote': full pricing + Greeks for a single symbol (e.g. BTC-25APR26-80000-C-USDT), returns contract details + greeks object. action='scan': scan for unusual IV (high_iv/low_iv require ~24h warmup), returns anomaly contracts[] + percentileAvailable. action='regime': ATM IV, IV percentile, put/call skew, term structure per underlying, returns per-underlying regime object.",
+          description: "Options market data for BTC/ETH/SOL/XAUT/XRP/MNT/DOGE — four actions. 'chain': browse an underlying's contracts. 'quote': full pricing + Greeks for one symbol (e.g. BTC-25APR26-80000-C-USDT). 'scan': unusual-IV scan (high_iv/low_iv require ~24h warmup). 'regime': ATM IV, IV percentile, put/call skew, term structure per underlying.",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -448,8 +449,8 @@ function createServer(
               },
               filter: { type: "string", enum: ["high_iv", "low_iv", "skew", "high_oi_change"], description: "For scan" },
               expiry: { type: "string", enum: ["weekly", "monthly", "all"], description: "For scan. Default: all" },
-              limit: { type: "number", description: "For scan. Default: 10" },
-              compact: { type: "boolean", description: "For chain: return minimal fields only (symbol, strike, expiry, daysToExpiry, type, bid, ask, iv, openInterest). Default: true" },
+              limit: { type: "number", description: "For chain: max contracts returned, top open-interest kept when more match (default 50; response reports returned vs matched). For scan: max results (default 10)." },
+              compact: { type: "boolean", description: "For chain: grouped-by-expiry response — expiries[] of {expiryToken, expiryDate, daysToExpiry, contracts: [strike, \"C\"|\"P\", bid, ask, iv, openInterest]}. Default: true. Set false for full per-contract objects." },
             },
             // Per-action required fields (chain→underlying, quote→symbol,
             // scan→underlying+filter) are enforced at runtime in the options
@@ -490,7 +491,7 @@ function createServer(
         },
         {
           name: "place_option_trade",
-          description: "place_option_trade — Place a single-leg option order on Bybit (BTC, ETH, SOL, XAUT, XRP, MNT, DOGE). CONFIRMATION REQUIRED: (1) Present the full trade plan — symbol, side, qty, orderType, estimated premium, Greeks, payoff summary. (2) Wait for the user to reply with 'CONFIRM'. (3) Only call this tool after receiving explicit CONFIRM. Recommended workflow: present plan → CONFIRM → call with dry_run=true → verify estimatedPremium and warnings → call again with dry_run=false. Short selling requires OPTIONS_ALLOW_NAKED_SHORT=true unless an offsetting long exists.",
+          description: "Place a single-leg option order on Bybit (BTC, ETH, SOL, XAUT, XRP, MNT, DOGE). CONFIRMATION REQUIRED: (1) Present the full trade plan — symbol, side, qty, orderType, estimated premium, Greeks, payoff summary. (2) Wait for the user to reply with 'CONFIRM'. (3) Only call this tool after receiving explicit CONFIRM. Recommended workflow: present plan → CONFIRM → call with dry_run=true → verify estimatedPremium and warnings → call again with dry_run=false. Short selling requires OPTIONS_ALLOW_NAKED_SHORT=true unless an offsetting long exists.",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -508,7 +509,7 @@ function createServer(
         },
         {
           name: "close_option_position",
-          description: "close_option_position — Close an open option position (fully or partially). CONFIRMATION REQUIRED: (1) Present the close plan — symbol, qty, side, estimated P&L. (2) Wait for the user to reply with 'CONFIRM'. (3) Only call this tool after receiving explicit CONFIRM. Use dry_run=true first to verify estimated P&L before submitting.",
+          description: "Close an open option position (fully or partially). CONFIRMATION REQUIRED: (1) Present the close plan — symbol, qty, side, estimated P&L. (2) Wait for the user to reply with 'CONFIRM'. (3) Only call this tool after receiving explicit CONFIRM. Use dry_run=true first to verify estimated P&L before submitting.",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -527,7 +528,7 @@ function createServer(
       ...(ENABLE_RFQ ? [
         {
           name: "rfq_query",
-          description: "Read-only Bybit RFQ / block-trade queries (taker side). action='rfq_list': historical RFQs (paginated). action='rfq_realtime': currently active RFQs. action='quote_list': historical LP quotes (paginated). action='quote_realtime': live LP quotes for an RFQ — the poll path while waiting for makers. action='trade_list': executed RFQ trades. All actions are account-scoped and read-only; no orders are placed. NOTE: RFQ requires a UTA 2.0 + portfolio-margin account; use check_rfq_eligibility first.",
+          description: "Read-only Bybit RFQ / block-trade queries (taker side): 'rfq_list' / 'rfq_realtime' (historical / active RFQs), 'quote_list' / 'quote_realtime' (LP quote history / live quotes — the poll path), 'trade_list' (executed trades). No orders placed. Requires UTA 2.0 + portfolio margin; use check_rfq_eligibility first.",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -546,7 +547,7 @@ function createServer(
         },
         {
           name: "check_rfq_eligibility",
-          description: "Pre-flight check for Bybit RFQ access. Calls /v5/account/info and reports whether the account meets RFQ hard requirements: UTA 2.0 (unifiedMarginStatus 5 or 6), PORTFOLIO_MARGIN, and — if notionalUsd is supplied — the 10,000 USD per-RFQ minimum. Returns { eligible, reasons[], accountInfo }. reasons[] explains every failed gate. Run this before attempting any RFQ workflow.",
+          description: "Pre-flight check for Bybit RFQ access against the hard requirements: UTA 2.0 (unifiedMarginStatus 5 or 6), PORTFOLIO_MARGIN, and — if notionalUsd is supplied — the 10,000 USD per-RFQ minimum. reasons[] explains every failed gate. Run before any RFQ workflow.",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -556,7 +557,7 @@ function createServer(
         },
         {
           name: "assess_combo_risk",
-          description: "Pure-math combo risk assessment for a multi-leg RFQ structure — no API call. Models max loss only when EVERY leg is an option (reuses the option payoff engine). Any linear/spot leg, missing spot, or unpriced leg => modeled:false, maxLossUsd:null, treated as uncovered. Returns { modeled, maxLossUsd, maxProfit, breakevens, uncovered, allowed, reasons[] }. Uncovered/unmodeled combos are blocked unless RFQ_ALLOW_UNCOVERED=true (or OPTIONS_ALLOW_NAKED_SHORT=true). Risk-defined spreads are correctly NOT flagged.",
+          description: "Pure-math combo risk assessment for a multi-leg RFQ structure — no API call. Models max loss only when EVERY leg is an option; any linear/spot leg, missing spot, or unpriced leg => modeled:false, maxLossUsd:null, treated as uncovered. Uncovered/unmodeled combos are blocked unless RFQ_ALLOW_UNCOVERED=true (or OPTIONS_ALLOW_NAKED_SHORT=true). Risk-defined spreads are correctly NOT flagged.",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -581,7 +582,7 @@ function createServer(
         },
         {
           name: "create_rfq",
-          description: "create_rfq — Create a multi-leg Bybit RFQ (block-trade request for quote). MOVES TOWARD REAL MONEY. CONFIRMATION REQUIRED: (1) Present the full RFQ plan — counterparties, every leg, estimated notional. (2) Wait for the user to reply 'CONFIRM'. (3) Call with dry_run=true first — inspect eligibility, risk, and the exact request body. (4) Only call with dry_run=false after explicit CONFIRM. dry_run defaults to true. Live submission ALSO requires RFQ_ENABLE_WRITES=true (off until endpoint paths are live-verified). Pre-flights: account must be RFQ-eligible (UTA 2.0 + portfolio margin) and the combo must pass the risk gate (uncovered/unmodeled combos blocked unless RFQ_ALLOW_UNCOVERED).",
+          description: "Create a multi-leg Bybit RFQ (block-trade request for quote). MOVES TOWARD REAL MONEY. CONFIRMATION REQUIRED: (1) Present the full RFQ plan — counterparties, every leg, estimated notional. (2) Wait for the user to reply 'CONFIRM'. (3) Call with dry_run=true first — inspect eligibility, risk, and the exact request body. (4) Only call with dry_run=false after explicit CONFIRM. dry_run defaults to true. Live submission ALSO requires RFQ_ENABLE_WRITES=true (off until endpoint paths are live-verified). Pre-flights: account must be RFQ-eligible (UTA 2.0 + portfolio margin) and the combo must pass the risk gate (uncovered/unmodeled combos blocked unless RFQ_ALLOW_UNCOVERED).",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -613,7 +614,7 @@ function createServer(
         },
         {
           name: "execute_quote",
-          description: "execute_quote — Execute an LP's quote against an existing RFQ. IRREVERSIBLE, FILLS REAL MONEY ASYNCHRONOUSLY. CONFIRMATION REQUIRED: (1) Present the quote (use quote_realtime) and the exact rfqId/quoteId/quoteSide. (2) Wait for 'CONFIRM'. (3) Call with dry_run=true to echo the request. (4) Only call dry_run=false after explicit CONFIRM. dry_run defaults to true. Live submission ALSO requires RFQ_ENABLE_WRITES=true.",
+          description: "Execute an LP's quote against an existing RFQ. IRREVERSIBLE, FILLS REAL MONEY ASYNCHRONOUSLY. CONFIRMATION REQUIRED: (1) Present the quote (use quote_realtime) and the exact rfqId/quoteId/quoteSide. (2) Wait for 'CONFIRM'. (3) Call with dry_run=true to echo the request. (4) Only call dry_run=false after explicit CONFIRM. dry_run defaults to true. Live submission ALSO requires RFQ_ENABLE_WRITES=true.",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -628,7 +629,7 @@ function createServer(
         },
         {
           name: "cancel_rfq",
-          description: "cancel_rfq — Cancel an open RFQ you created. Risk-reducing; not behind the write kill-switch. Supply rfqId or rfqLinkId.",
+          description: "Cancel an open RFQ you created. Risk-reducing; not behind the write kill-switch. Supply rfqId or rfqLinkId.",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -912,6 +913,7 @@ function createServer(
               minOpenInterest: a.minOpenInterest as number | undefined,
               strikeRange: a.strikeRange as { minPctFromSpot: number; maxPctFromSpot: number } | undefined,
               compact: a.compact as boolean | undefined,
+              limit: a.limit as number | undefined,
             });
             result = { ...data, serverTimestamp: new Date().toISOString() };
           } else if (action === "quote") {
@@ -1115,7 +1117,10 @@ function createServer(
           throw new Error(`Unknown tool: ${name}`);
       }
 
-      return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+      // Round only non-integer floats: integers include ms-epoch timestamps, which sigFig(8) would corrupt.
+      const text = JSON.stringify(result, (_k, v) =>
+        typeof v === "number" && !Number.isInteger(v) ? sigFig(v) : v);
+      return { content: [{ type: "text" as const, text }] };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       return {

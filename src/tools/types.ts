@@ -295,6 +295,5 @@ export interface TradfiInstrumentsResult {
   xstocks: TradfiInstrument[];
   stock_perps: TradfiInstrument[];
   commodity_perps: TradfiInstrument[];
-  dataNote?: string;
   total: number;
 }

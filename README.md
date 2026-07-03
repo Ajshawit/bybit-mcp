@@ -99,7 +99,7 @@ Bybit V5 API for AI agents, with confirmation-based safety rails. Exposes Bybit'
 |------|-------------|
 | `list_tradfi_instruments` | Discover Bybit's TradFi instruments: **xStocks** (tokenized equities, e.g. `TSLAXUSDT` — trade with `category=spot`), **stock perpetuals** (e.g. `TSLAPUSDT` — `category=linear`), and **commodity perpetuals** (e.g. `XAUUSDT` gold, `XAGUSDT` silver, `CLUSDT` crude — `category=linear`). Filter by `type` (`xstocks` / `stock_perps` / `commodity_perps` / `all`) and `search` substring. Returns `tickSize`, `minOrderQty`, `maxLeverage`. Call this before the first TradFi trade in a session to confirm exact symbols. |
 
-> **TradFi data caveat:** Bybit's stock/commodity perps and xStocks trade around the clock, but the underlying equity only moves during NYSE hours (09:30–16:00 ET, Mon–Fri). Use `get_market_data` with `category=spot` on an xStock symbol for real-time NYSE session status. Volume, funding, and OI for **all** TradFi instruments reflect Bybit's market only — not real NYSE/CME flow. Responses include a `dataNote` field repeating this.
+> **TradFi data caveat:** Bybit's stock/commodity perps and xStocks trade around the clock, but the underlying equity only moves during NYSE hours (09:30–16:00 ET, Mon–Fri). Use `get_market_data` with `category=spot` on an xStock symbol for real-time NYSE session status. Volume, funding, and OI for **all** TradFi instruments reflect Bybit's market only — not real NYSE/CME flow.
 
 ### Options (requires `ENABLE_OPTIONS=true`)
 
@@ -107,7 +107,7 @@ Underlyings: **BTC, ETH, SOL, XAUT (Tether Gold), XRP, MNT, DOGE** — all USDT-
 
 | Tool | Description |
 |------|-------------|
-| `options_market` | Consolidated options data for BTC, ETH, SOL, XAUT, XRP, MNT, DOGE. Select mode via `action`: **`chain`** (browse contracts, filterable by expiry/type/OI/strike range; returns minimal fields by default — pass `compact:false` for the full set incl. moneyness/mark/lastPrice/volume24h), **`quote`** (full pricing + Greeks for one symbol, opt-in local Black-Scholes verification via `computeGreeksLocal:true`), **`scan`** (IV anomalies — `high_iv`/`low_iv` need ~24h warmup — plus `skew`, `high_oi_change`), **`regime`** (ATM IV, IV percentile, put/call skew, term structure per underlying). |
+| `options_market` | Consolidated options data for BTC, ETH, SOL, XAUT, XRP, MNT, DOGE. Select mode via `action`: **`chain`** (browse contracts, filterable by expiry/type/OI/strike range; compact default groups by expiry with `[strike, C|P, bid, ask, iv, openInterest]` tuples and keeps the top-OI `limit` contracts (default 50) — pass `compact:false` for full per-contract objects incl. moneyness/mark/lastPrice/volume24h), **`quote`** (full pricing + Greeks for one symbol, opt-in local Black-Scholes verification via `computeGreeksLocal:true`), **`scan`** (IV anomalies — `high_iv`/`low_iv` need ~24h warmup — plus `skew`, `high_oi_change`), **`regime`** (ATM IV, IV percentile, put/call skew, term structure per underlying). |
 | `get_option_payoff` | Compute expiry payoff for one or more legs — PnL at each price point, max loss, max profit, breakeven(s). Pure math, no API call. Use before placing to verify risk/reward. |
 | `place_option_trade` | Place a single-leg option order (BTC, ETH, SOL, XAUT, XRP, MNT, DOGE) with `dry_run` support and naked-short guards. |
 | `close_option_position` | Close an open option position fully or partially, with `dry_run` P&L preview. |
