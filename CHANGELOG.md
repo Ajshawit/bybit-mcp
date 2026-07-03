@@ -4,17 +4,28 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.0] — 2026-06-18
+## [0.6.0] — 2026-07-03
 
-Options coverage expanded from 3 to 7 underlyings. 589 tests across 35 suites.
+Options coverage expanded from 3 to 7 underlyings, plus a token-efficiency pass across responses and tool schemas. 604 tests across 35 suites.
 
 ### Added
 
 - **XAUT, XRP, MNT, DOGE options** — `options_market` (`chain`/`scan`/`regime`), the `get_volatility` IV−RV spread, and the `get_event_calendar` option-expiry schedule now cover Bybit's XAUT (Tether Gold), XRP, MNT, and DOGE USDT-settled options alongside BTC/ETH/SOL. `quote` and `place_option_trade` already accepted any full option symbol (`XAUT-31JUL26-3950-P-USDT`); their schemas and docs now advertise the new underlyings. A single `OPTION_UNDERLYINGS` constant (`src/tools/options/types.ts`) is now the source of truth, replacing the `["BTC","ETH","SOL"]` literals previously scattered across the options, volatility, and calendar tools.
+- **`options_market` chain `limit`** — caps returned contracts (default 50), keeping the highest open interest when more match; responses report `returned` vs `matched` so truncation is never silent.
 
 ### Changed
 
 - **`options_market` `regime` default** — with no `underlyings` argument it now returns signals for all 7 underlyings (previously BTC/ETH/SOL only).
+- **`options_market` chain compact shape** — compact mode (the default) now groups contracts by expiry: `expiries[]` of `{expiryToken, expiryDate, daysToExpiry, contracts}` with tuple contracts `[strike, "C"|"P", bid, ask, iv, openInterest]` and a `contractsFormat` legend. A default BTC chain call drops from ~48KB to ~3.3KB. `compact:false` keeps the flat full-field shape.
+- **`get_portfolio_risk` scenarios** — the per-cell object grid is now a `pnlUsdGrid` 2D array (rows follow `spotShocksPct`, columns follow `ivShocksPts`, `gridFormat` legend included); `worstCase` is unchanged. The static methodology `note` moved into the tool description.
+- **Static prose removed from responses** — `get_carry_analytics` `carryNote`/`estimateNote` and the `list_tradfi_instruments` `dataNote` are gone; constant guidance lives in tool descriptions instead of every response.
+- **Tool descriptions trimmed ~38%** — the tools/list payload drops from ~39.8KB to ~33.8KB (full config); confirmation/safety language is untouched.
+- **Global float rounding** — non-integer numbers are rounded to 8 significant figures at the serialization boundary (integers exempt, preserving ms-epoch timestamps), trimming float noise like `0.09999999999854481` from every tool.
+- **`get_account_status`** — omits `accountInfo` when unavailable (previously `{}`) and filters spot holdings under $1 of known USD value, reporting the count as `spotDustFiltered`; unknown-value holdings are always kept. `get_market_data` now omits the `klines` key entirely unless `includeKlines=true` (previously `{}`).
+
+### Fixed
+
+- **`scan_market` no longer zeroes sub-cent prices** — the `price` field in all four scan filters was rounded to the nearest integer, returning `0` for sub-cent symbols (e.g. PENGUUSDT); it now uses the same significant-figure rounding as OHLC.
 
 ## [0.5.1] — 2026-06-14
 
