@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Live drift probe: asserts Bybit public V5 endpoints still return the fields this server reads.
 // Zero deps (Node >=18 global fetch). Exit 1 on any failure.
-const BASE = "https://api.bybit.com";
+// Override lets CI route around Bybit's US geo-block (GitHub runners) without a code change.
+const BASE = process.env.BYBIT_PROBE_BASE ?? "https://api.bybit.com";
 const TIMEOUT_MS = 15_000;
 const GAP_MS = 150;
 
@@ -19,16 +20,25 @@ const isArrayOfLen = (v, min, exact) =>
   Array.isArray(v) && (exact ? v.length === min : v.length >= min);
 
 let failures = 0;
+console.log(`base: ${BASE}`);
 
 // check(result) returns an array of problem strings (empty = ok).
 async function probe(path, check) {
   let problems;
   try {
     const res = await fetch(BASE + path, { signal: AbortSignal.timeout(TIMEOUT_MS) });
-    const body = await res.json();
+    const text = await res.text();
+    // Raw-response context so geo-block / CDN pages are visible in CI logs.
+    const raw = () => `[http ${res.status} ${res.headers.get("content-type")}] ${text.slice(0, 160).replace(/\s+/g, " ")}`;
+    let body;
+    try {
+      body = JSON.parse(text);
+    } catch (err) {
+      throw new Error(`bad JSON (${err.message}) ${raw()}`);
+    }
     problems = body.retCode === 0
       ? check(body.result)
-      : [`retCode=${body.retCode} ${body.retMsg}`];
+      : [`retCode=${body.retCode} ${body.retMsg} ${raw()}`];
   } catch (err) {
     problems = [`request error: ${err.message}`];
   }

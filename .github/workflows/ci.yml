@@ -35,3 +35,5 @@ jobs:
         with:
           node-version: 22
       - run: node scripts/live-probe.mjs
+        env:
+          BYBIT_PROBE_BASE: ${{ vars.BYBIT_PROBE_BASE || 'https://api.bybit.com' }}
