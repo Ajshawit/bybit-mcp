@@ -55,13 +55,13 @@ describe("handleGetOptionChain", () => {
   beforeEach(() => jest.spyOn(Date, "now").mockReturnValue(NOW));
   afterEach(() => jest.restoreAllMocks());
 
-  it("fetches option chain and spot price in parallel", async () => {
+  it("fetches option chain and linear-perp reference price in parallel (stock underlyings have no spot pair)", async () => {
     const client = clientWith(mockChainResponse);
     await handleGetOptionChain(client, { underlying: "BTC" });
 
     const calls = (client.publicGet as jest.Mock).mock.calls;
     expect(calls[0][1]).toMatchObject({ category: "option", baseCoin: "BTC" });
-    expect(calls[1][1]).toMatchObject({ category: "spot", symbol: "BTCUSDT" });
+    expect(calls[1][1]).toMatchObject({ category: "linear", symbol: "BTCUSDT" });
   });
 
   it("returns spot price, counts, format string, and serverTimestamp", async () => {

@@ -429,7 +429,7 @@ function createServer(
       ...(ENABLE_OPTIONS ? [
         {
           name: "options_market",
-          description: "Options market data for BTC/ETH/SOL/XAUT/XRP/MNT/DOGE — four actions. 'chain': browse an underlying's contracts. 'quote': full pricing + Greeks for one symbol (e.g. BTC-25APR26-80000-C-USDT). 'scan': unusual-IV scan (high_iv/low_iv require ~24h warmup). 'regime': ATM IV, IV percentile, put/call skew, term structure per underlying.",
+          description: "Options market data for 16 underlyings (crypto BTC/ETH/SOL/XAUT/HYPE/XRP/MNT/DOGE; stock SPCX/NVDA/SNDK/QQQ/SKHY/MU/TSLA/SOXL) — four actions. 'chain': browse an underlying's contracts. 'quote': full pricing + Greeks for one symbol (e.g. BTC-25APR26-80000-C-USDT). 'scan': unusual-IV scan (high_iv/low_iv require ~24h warmup). 'regime': ATM IV, IV percentile, put/call skew, term structure per underlying.",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -491,7 +491,7 @@ function createServer(
         },
         {
           name: "place_option_trade",
-          description: "Place a single-leg option order on Bybit (BTC, ETH, SOL, XAUT, XRP, MNT, DOGE). CONFIRMATION REQUIRED: (1) Present the full trade plan — symbol, side, qty, orderType, estimated premium, Greeks, payoff summary. (2) Wait for the user to reply with 'CONFIRM'. (3) Only call this tool after receiving explicit CONFIRM. Recommended workflow: present plan → CONFIRM → call with dry_run=true → verify estimatedPremium and warnings → call again with dry_run=false. Short selling requires OPTIONS_ALLOW_NAKED_SHORT=true unless an offsetting long exists.",
+          description: "Place a single-leg option order on Bybit (any listed crypto or stock option underlying, e.g. BTC, ETH, TSLA, NVDA). CONFIRMATION REQUIRED: (1) Present the full trade plan — symbol, side, qty, orderType, estimated premium, Greeks, payoff summary. (2) Wait for the user to reply with 'CONFIRM'. (3) Only call this tool after receiving explicit CONFIRM. Recommended workflow: present plan → CONFIRM → call with dry_run=true → verify estimatedPremium and warnings → call again with dry_run=false. Short selling requires OPTIONS_ALLOW_NAKED_SHORT=true unless an offsetting long exists.",
           inputSchema: {
             type: "object" as const,
             properties: {
