@@ -273,6 +273,11 @@ export interface TradfiInstrumentRaw {
     qtyStep?: string;
   };
   leverageFilter?: { maxLeverage?: string };
+  // linear-only; spot xstocks entries omit these
+  fullName?: string;
+  marketRegion?: string;
+  underlyingTicker?: string;
+  tags?: string[];
 }
 
 export interface TradfiInstrumentListResult {
@@ -283,17 +288,23 @@ export interface TradfiInstrumentListResult {
 export interface TradfiInstrument {
   symbol: string;
   baseCoin: string;
-  type: "xstock" | "stock_perp" | "commodity_perp";
+  type: "xstock" | "stock_perp" | "commodity_perp" | "etf_perp" | "forex_perp";
   status: string;
   tickSize: string;
   minOrderQty: string;
   maxOrderQty?: string;
   maxLeverage?: string;
+  fullName?: string;
+  marketRegion?: string;
+  underlyingTicker?: string;
+  tags?: string[];
 }
 
 export interface TradfiInstrumentsResult {
   xstocks: TradfiInstrument[];
   stock_perps: TradfiInstrument[];
   commodity_perps: TradfiInstrument[];
+  etf_perps: TradfiInstrument[];
+  forex_perps: TradfiInstrument[];
   total: number;
 }

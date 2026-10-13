@@ -410,13 +410,13 @@ function createServer(
       },
       {
         name: "list_tradfi_instruments",
-        description: "Discover Bybit TradFi instruments and constraints (tickSize, minOrderQty, maxLeverage): xStocks (tokenized equities e.g. TSLAXUSDT, category=spot), stock perps (e.g. TSLAPUSDT) and commodity perps (e.g. XAUUSDT), category=linear. Call before the first TradFi trade in a session. These markets trade 24/7 but underlying equities move only during NYSE hours; volume/funding/OI are Bybit-market-only positioning indicators, not real NYSE/CME flows.",
+        description: "Discover Bybit TradFi instruments and constraints (tickSize, minOrderQty, maxLeverage): xStocks (tokenized equities e.g. TSLAXUSDT, category=spot), stock perps (e.g. TSLAPUSDT), commodity perps (e.g. XAUUSDT), ETF perps (e.g. ARKKUSDT) and forex perps (e.g. EURUSDUSDT), category=linear. Perps also carry fullName/marketRegion/underlyingTicker/tags; status PendingOpen means orders are rejected until Trading. Call before the first TradFi trade in a session. These markets trade 24/7 but underlying equities move only during NYSE hours; volume/funding/OI are Bybit-market-only positioning indicators, not real NYSE/CME flows.",
         inputSchema: {
           type: "object" as const,
           properties: {
             type: {
               type: "string",
-              enum: ["xstocks", "stock_perps", "commodity_perps", "all"],
+              enum: ["xstocks", "stock_perps", "commodity_perps", "etf_perps", "forex_perps", "all"],
               description: "Which TradFi asset type to list. Default: all",
             },
             search: {
@@ -598,6 +598,7 @@ function createServer(
                     side: { type: "string", enum: ["buy", "sell"] },
                     qty: { type: "string", description: "Quantity as a string (Bybit wire format)" },
                     isLeverage: { type: "boolean" },
+                    isHedge: { type: "boolean", description: "Marks a perp leg that delta-hedges the option legs" },
                   },
                   required: ["category", "symbol", "side", "qty"],
                 },
@@ -991,7 +992,7 @@ function createServer(
         case "list_tradfi_instruments": {
           const data = await handleListTradfiInstruments(
             client,
-            (a.type as "xstocks" | "stock_perps" | "commodity_perps" | "all" | undefined) ?? "all",
+            (a.type as "xstocks" | "stock_perps" | "commodity_perps" | "etf_perps" | "forex_perps" | "all" | undefined) ?? "all",
             a.search as string | undefined
           );
           result = { ...data, serverTimestamp: new Date().toISOString() };

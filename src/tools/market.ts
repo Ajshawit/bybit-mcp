@@ -826,11 +826,11 @@ async function scanAccountRatio(
 
 export async function handleListTradfiInstruments(
   client: BybitClient,
-  type: "xstocks" | "stock_perps" | "commodity_perps" | "all" = "all",
+  type: "xstocks" | "stock_perps" | "commodity_perps" | "etf_perps" | "forex_perps" | "all" = "all",
   search?: string
 ): Promise<TradfiInstrumentsResult> {
   // 500 covers all current TradFi listings; increase if Bybit adds more instruments
-  const [xstocksRes, stockPerpsRes, commodityPerpsRes] = await Promise.all([
+  const [xstocksRes, stockPerpsRes, commodityPerpsRes, etfPerpsRes, forexPerpsRes] = await Promise.all([
     type === "all" || type === "xstocks"
       ? client.publicGet<TradfiInstrumentListResult>("/v5/market/instruments-info", { category: "spot", symbolType: "xstocks", limit: "500" })
       : Promise.resolve({ list: [] }),
@@ -839,6 +839,12 @@ export async function handleListTradfiInstruments(
       : Promise.resolve({ list: [] }),
     type === "all" || type === "commodity_perps"
       ? client.publicGet<TradfiInstrumentListResult>("/v5/market/instruments-info", { category: "linear", symbolType: "commodity", limit: "500" })
+      : Promise.resolve({ list: [] }),
+    type === "all" || type === "etf_perps"
+      ? client.publicGet<TradfiInstrumentListResult>("/v5/market/instruments-info", { category: "linear", symbolType: "ETF", limit: "500" })
+      : Promise.resolve({ list: [] }),
+    type === "all" || type === "forex_perps"
+      ? client.publicGet<TradfiInstrumentListResult>("/v5/market/instruments-info", { category: "linear", symbolType: "forex", limit: "500" })
       : Promise.resolve({ list: [] }),
   ]);
 
@@ -851,6 +857,10 @@ export async function handleListTradfiInstruments(
     minOrderQty: raw.lotSizeFilter.minOrderQty,
     maxOrderQty: raw.lotSizeFilter.maxOrderQty,
     maxLeverage: raw.leverageFilter?.maxLeverage,
+    ...(raw.fullName !== undefined && { fullName: raw.fullName }),
+    ...(raw.marketRegion !== undefined && { marketRegion: raw.marketRegion }),
+    ...(raw.underlyingTicker !== undefined && { underlyingTicker: raw.underlyingTicker }),
+    ...(raw.tags !== undefined && { tags: raw.tags }),
   });
 
   const searchLower = search?.toLowerCase();
@@ -864,6 +874,11 @@ export async function handleListTradfiInstruments(
   const xstocks = filterBySearch(xstocksRes.list.map((r) => mapInstrument(r, "xstock")));
   const stock_perps = filterBySearch(stockPerpsRes.list.map((r) => mapInstrument(r, "stock_perp")));
   const commodity_perps = filterBySearch(commodityPerpsRes.list.map((r) => mapInstrument(r, "commodity_perp")));
+  const etf_perps = filterBySearch(etfPerpsRes.list.map((r) => mapInstrument(r, "etf_perp")));
+  const forex_perps = filterBySearch(forexPerpsRes.list.map((r) => mapInstrument(r, "forex_perp")));
 
-  return { xstocks, stock_perps, commodity_perps, total: xstocks.length + stock_perps.length + commodity_perps.length };
+  return {
+    xstocks, stock_perps, commodity_perps, etf_perps, forex_perps,
+    total: xstocks.length + stock_perps.length + commodity_perps.length + etf_perps.length + forex_perps.length,
+  };
 }
