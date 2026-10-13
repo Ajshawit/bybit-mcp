@@ -126,6 +126,7 @@ function buildCreateBody(params: CreateRfqParams): Record<string, unknown> {
       side: l.side,
       qty: l.qty,
       ...(l.isLeverage !== undefined ? { isLeverage: l.isLeverage } : {}),
+      ...(l.isHedge !== undefined ? { isHedge: l.isHedge } : {}),
     })),
   };
   if (params.rfqLinkId !== undefined) body.rfqLinkId = params.rfqLinkId;
