@@ -265,7 +265,7 @@ export async function handlePlacePerp(
   if (trailingStop != null) {
     try {
       const trailingBody: Record<string, unknown> = {
-        category, symbol, side, positionIdx,
+        category, symbol, tpslMode: "Full", positionIdx,
         trailingStop: String(trailingStop),
       };
       if (trailingActivatePrice != null) trailingBody.activePrice = String(trailingActivatePrice);
@@ -416,7 +416,7 @@ export async function handleManagePosition(
 
   const positionIdx = await detectPositionIdx(client, category, symbol, side);
 
-  const body: Record<string, unknown> = { category, symbol, positionIdx };
+  const body: Record<string, unknown> = { category, symbol, tpslMode: "Full", positionIdx };
   if (updates.sl != null) body.stopLoss = String(updates.sl);
   if (updates.tp != null) body.takeProfit = String(updates.tp);
   if (updates.trailingStop != null) body.trailingStop = String(updates.trailingStop);
