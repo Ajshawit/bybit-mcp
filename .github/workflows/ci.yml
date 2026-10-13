@@ -34,4 +34,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # Bybit geo-blocks US IPs (CloudFront 403) and GitHub-hosted runners are US, so the probe
+      # self-skips here. Point runs-on at a non-US self-hosted runner label to make this job real.
       - run: node scripts/live-probe.mjs
+        env:
+          BYBIT_PROBE_BASE: ${{ vars.BYBIT_PROBE_BASE || 'https://api.bybit.com' }}
