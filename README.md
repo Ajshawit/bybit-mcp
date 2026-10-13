@@ -268,7 +268,7 @@ npm run dev         # auto-rebuild on file changes (TypeScript watch)
 npm run build       # compile to dist/
 ```
 
-Tests: 621 passing across 35 suites.
+Tests: 621 passing across 35 suites. `node scripts/live-probe.mjs` checks every public Bybit endpoint/field the server reads (run locally; GitHub runners are geo-blocked by Bybit).
 
 ---
 

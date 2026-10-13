@@ -13,7 +13,7 @@ npm test -- trade  # run a single suite by path fragment
 npm start          # node dist/index.js (needs prior build)
 ```
 
-CI: `node scripts/live-probe.mjs` — zero-dep probe of every public Bybit endpoint/field the server reads; runs weekly in `.github/workflows/ci.yml`. If it warns about extra option base coins, extend `OPTION_UNDERLYINGS` in `src/tools/options/types.ts` AND the copy in the script.
+CI: `node scripts/live-probe.mjs` — zero-dep probe of every public Bybit endpoint/field the server reads; runs weekly in `.github/workflows/ci.yml`. If it warns about extra option base coins, extend `OPTION_UNDERLYINGS` in `src/tools/options/types.ts` AND the copy in the script. GitHub-hosted runners are geo-blocked by Bybit (CloudFront 403), so the weekly job self-skips; run it locally after dependency or API changes.
 
 `prepublishOnly` runs build + test, so a failing test blocks `npm publish`.
 

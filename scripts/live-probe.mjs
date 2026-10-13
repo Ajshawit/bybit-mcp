@@ -22,6 +22,18 @@ const isArrayOfLen = (v, min, exact) =>
 let failures = 0;
 console.log(`base: ${BASE}`);
 
+// GitHub-hosted runners are US; Bybit's CloudFront 403s every US IP. Skip only that exact case,
+// so any other failure (outage, real drift) still reaches the probes below and fails the job.
+try {
+  const res = await fetch(BASE + "/v5/market/time", { signal: AbortSignal.timeout(TIMEOUT_MS) });
+  if (res.status === 403 && (await res.text()).includes("block access from your country")) {
+    console.log("SKIP geo-blocked: Bybit rejects this network's country (GitHub-hosted runners are US). Run locally or on a non-US self-hosted runner: node scripts/live-probe.mjs");
+    process.exit(0);
+  }
+} catch {
+  // fall through: the probe loop reports the error
+}
+
 // check(result) returns an array of problem strings (empty = ok).
 async function probe(path, check) {
   let problems;
