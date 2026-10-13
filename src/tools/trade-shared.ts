@@ -61,7 +61,7 @@ export async function ensureInstrumentInfo(
   info = {
     tickSize: inst.priceFilter.tickSize,
     qtyStep: inst.lotSizeFilter.qtyStep ?? inst.lotSizeFilter.basePrecision ?? "0.001",
-    minNotionalValue: inst.minNotionalValue ?? "0",
+    minNotionalValue: inst.lotSizeFilter.minNotionalValue ?? "0",
   };
   instrumentsCache.set(key, info);
   return info;

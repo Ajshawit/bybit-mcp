@@ -119,9 +119,9 @@ export interface InstrumentInfoResult {
       qtyStep?: string;
       basePrecision?: string;
       minOrderQty: string;
+      minNotionalValue?: string;
     };
     priceFilter: { tickSize: string };
-    minNotionalValue?: string;
   }>;
 }
 

@@ -8,18 +8,16 @@ const MockClient = BybitClient as jest.MockedClass<typeof BybitClient>;
 const mockInstResult = {
   list: [{
     symbol: "BTCUSDT",
-    lotSizeFilter: { qtyStep: "0.001", minOrderQty: "0.001" },
+    lotSizeFilter: { qtyStep: "0.001", minOrderQty: "0.001", minNotionalValue: "5" },
     priceFilter: { tickSize: "0.5" },
-    minNotionalValue: "5",
   }],
 };
 
 const mockSpotInstResult = {
   list: [{
     symbol: "BTCUSDT",
-    lotSizeFilter: { basePrecision: "0.000001", minOrderQty: "0.000001" },
+    lotSizeFilter: { basePrecision: "0.000001", minOrderQty: "0.000001", minOrderAmt: "1" },
     priceFilter: { tickSize: "0.01" },
-    minNotionalValue: "1",
   }],
 };
 
@@ -52,6 +50,15 @@ describe("ensureInstrumentInfo", () => {
       { category: "linear", symbol: "BTCUSDT" }
     );
     expect(instrumentsCache.get("linear:BTCUSDT")).toBeDefined();
+  });
+
+  it("reads minNotionalValue from lotSizeFilter", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockInstResult);
+
+    const result = await ensureInstrumentInfo(client, "linear", "BTCUSDT");
+
+    expect(result.minNotionalValue).toBe("5");
   });
 
   it("uses basePrecision as qtyStep for spot instruments", async () => {
