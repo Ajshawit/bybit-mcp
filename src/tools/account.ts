@@ -1,13 +1,15 @@
 import { BybitClient } from "../client";
 import { WalletBalanceResult, PositionListResult, SpotHolding } from "./types";
+import { parseFiniteOr } from "../util";
 import {
   parseOptionSymbol, OPTION_MULTIPLIERS, OptionPosition,
   BybitOptionPosition, OptionPositionListResult,
 } from "./options/types";
 
 interface QueryApiResult {
-  uid: string;
-  accountType: string;
+  userID?: number | string;
+  uta?: number;
+  readOnly?: number;
 }
 
 export interface AccountPosition {
@@ -37,7 +39,7 @@ export interface AccountStatus {
   spot_holdings: SpotHolding[];
   spotDustFiltered?: number;  // count of spot holdings dropped for being below SPOT_DUST_USD_THRESHOLD
   option_positions: OptionPosition[];  // always present; empty array when none or options disabled
-  accountInfo?: { uid: string; accountType: string };
+  accountInfo?: { uid: string; accountType: "UNIFIED" | "CLASSIC"; readOnlyKey?: boolean };
 }
 
 // Spot holdings with a known USD value below this are dropped from the
@@ -159,9 +161,10 @@ export async function handleGetAccountStatus(
   if (!usdtCoin) throw new Error("USDT coin not found in wallet balance response");
 
   const walletBalance = parseFloat(usdtCoin.walletBalance);
-  const totalPositionIM = parseFloat(usdtCoin.totalPositionIM);
-  const totalOrderIM = parseFloat(usdtCoin.totalOrderIM ?? "0");
-  const unrealisedPnl = parseFloat(usdtCoin.unrealisedPnl);
+  // Portfolio-margin accounts return "" for per-coin IM/uPnL fields.
+  const totalPositionIM = parseFiniteOr(usdtCoin.totalPositionIM, 0);
+  const totalOrderIM = parseFiniteOr(usdtCoin.totalOrderIM, 0);
+  const unrealisedPnl = parseFiniteOr(usdtCoin.unrealisedPnl, 0);
 
   const allSpotHoldings: SpotHolding[] = account.coin
     .filter((c) => c.coin !== "USDT" && parseFloat(c.walletBalance) > 0)
@@ -176,8 +179,12 @@ export async function handleGetAccountStatus(
   );
   const spotDustFiltered = allSpotHoldings.length - spot_holdings.length;
 
-  const accountInfo = queryApiRes?.uid && queryApiRes?.accountType
-    ? { uid: queryApiRes.uid, accountType: queryApiRes.accountType }
+  const accountInfo = queryApiRes?.userID != null
+    ? {
+        uid: String(queryApiRes.userID),
+        accountType: queryApiRes.uta === 1 ? "UNIFIED" as const : "CLASSIC" as const,
+        ...(queryApiRes.readOnly != null ? { readOnlyKey: queryApiRes.readOnly === 1 } : {}),
+      }
     : null;
 
   return {
@@ -186,7 +193,7 @@ export async function handleGetAccountStatus(
     marginInUse: totalPositionIM,
     marginReservedForOrders: totalOrderIM,
     unrealisedPnl,
-    maintenanceMargin: parseFloat(account.totalMaintenanceMargin),
+    maintenanceMargin: parseFiniteOr(account.totalMaintenanceMargin, 0),
     positions: mapPositions(linearRes.list),
     inverse_positions: mapPositions(inverseRes.list),
     spot_holdings,
