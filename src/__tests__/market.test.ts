@@ -1093,6 +1093,7 @@ describe("handleListTradfiInstruments", () => {
   it("returns xstocks from spot/xstocks call", async () => {
     const client = new MockClient("k", "s", "u");
     (client.publicGet as jest.Mock)
+      .mockResolvedValue({ list: [] })
       .mockResolvedValueOnce({ list: [makeRawInstrument({ symbol: "TSLAXUSDT", baseCoin: "TSLAX" })] }) // xstocks
       .mockResolvedValueOnce({ list: [] }) // stock_perps
       .mockResolvedValueOnce({ list: [] }); // commodity_perps
@@ -1108,6 +1109,7 @@ describe("handleListTradfiInstruments", () => {
   it("returns stock_perps from linear/stock call", async () => {
     const client = new MockClient("k", "s", "u");
     (client.publicGet as jest.Mock)
+      .mockResolvedValue({ list: [] })
       .mockResolvedValueOnce({ list: [] }) // xstocks
       .mockResolvedValueOnce({ list: [makeRawInstrument({ symbol: "TSLAPUSDT", baseCoin: "TSLAP", maxLeverage: "5" })] })
       .mockResolvedValueOnce({ list: [] });
@@ -1123,6 +1125,7 @@ describe("handleListTradfiInstruments", () => {
   it("returns commodity_perps from linear/commodity call", async () => {
     const client = new MockClient("k", "s", "u");
     (client.publicGet as jest.Mock)
+      .mockResolvedValue({ list: [] })
       .mockResolvedValueOnce({ list: [] })
       .mockResolvedValueOnce({ list: [] })
       .mockResolvedValueOnce({ list: [makeRawInstrument({ symbol: "XAUUSDT", baseCoin: "XAU", maxLeverage: "25" })] });
@@ -1137,6 +1140,7 @@ describe("handleListTradfiInstruments", () => {
   it("total equals sum of all three arrays", async () => {
     const client = new MockClient("k", "s", "u");
     (client.publicGet as jest.Mock)
+      .mockResolvedValue({ list: [] })
       .mockResolvedValueOnce({ list: [makeRawInstrument({ symbol: "TSLAXUSDT" }), makeRawInstrument({ symbol: "AAPLXUSDT" })] })
       .mockResolvedValueOnce({ list: [makeRawInstrument({ symbol: "TSLAPUSDT" })] })
       .mockResolvedValueOnce({ list: [makeRawInstrument({ symbol: "XAUUSDT" })] });
@@ -1148,6 +1152,7 @@ describe("handleListTradfiInstruments", () => {
   it("filters by search string case-insensitively", async () => {
     const client = new MockClient("k", "s", "u");
     (client.publicGet as jest.Mock)
+      .mockResolvedValue({ list: [] })
       .mockResolvedValueOnce({ list: [
         makeRawInstrument({ symbol: "TSLAXUSDT", baseCoin: "TSLAX" }),
         makeRawInstrument({ symbol: "AAPLXUSDT", baseCoin: "AAPLX" }),
@@ -1163,17 +1168,19 @@ describe("handleListTradfiInstruments", () => {
     expect(result.stock_perps[0].symbol).toBe("TSLAPUSDT");
   });
 
-  it("makes three parallel publicGet calls with correct params", async () => {
+  it("makes five parallel publicGet calls with correct params", async () => {
     const client = new MockClient("k", "s", "u");
     (client.publicGet as jest.Mock).mockResolvedValue({ list: [] });
 
     await handleListTradfiInstruments(client);
 
     const calls = (client.publicGet as jest.Mock).mock.calls;
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(5);
     expect(calls.some(([, p]: [string, Record<string, string>]) => p.symbolType === "xstocks" && p.category === "spot")).toBe(true);
     expect(calls.some(([, p]: [string, Record<string, string>]) => p.symbolType === "stock" && p.category === "linear")).toBe(true);
     expect(calls.some(([, p]: [string, Record<string, string>]) => p.symbolType === "commodity" && p.category === "linear")).toBe(true);
+    expect(calls.some(([, p]: [string, Record<string, string>]) => p.symbolType === "ETF" && p.category === "linear")).toBe(true);
+    expect(calls.some(([, p]: [string, Record<string, string>]) => p.symbolType === "forex" && p.category === "linear")).toBe(true);
   });
 
   it("makes only one publicGet call when type is filtered", async () => {
@@ -1186,5 +1193,68 @@ describe("handleListTradfiInstruments", () => {
     const [, params] = (client.publicGet as jest.Mock).mock.calls[0];
     expect(params.symbolType).toBe("xstocks");
     expect(params.category).toBe("spot");
+  });
+
+  it("returns etf_perps and forex_perps and includes them in total", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock)
+      .mockResolvedValueOnce({ list: [makeRawInstrument({ symbol: "TSLAXUSDT" })] })
+      .mockResolvedValueOnce({ list: [makeRawInstrument({ symbol: "TSLAPUSDT" })] })
+      .mockResolvedValueOnce({ list: [makeRawInstrument({ symbol: "XAUUSDT" })] })
+      .mockResolvedValueOnce({ list: [makeRawInstrument({ symbol: "ARKKUSDT", baseCoin: "ARKK" }), makeRawInstrument({ symbol: "SPYUSDT" })] })
+      .mockResolvedValueOnce({ list: [makeRawInstrument({ symbol: "EURUSDUSDT", baseCoin: "EURUSD" })] });
+
+    const result = await handleListTradfiInstruments(client);
+
+    expect(result.etf_perps.map((i) => i.symbol)).toEqual(["ARKKUSDT", "SPYUSDT"]);
+    expect(result.etf_perps[0].type).toBe("etf_perp");
+    expect(result.forex_perps.map((i) => i.symbol)).toEqual(["EURUSDUSDT"]);
+    expect(result.forex_perps[0].type).toBe("forex_perp");
+    expect(result.total).toBe(6);
+  });
+
+  it.each([
+    ["etf_perps", "ETF"],
+    ["forex_perps", "forex"],
+  ] as const)("type=%s only calls linear/%s", async (type, symbolType) => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue({ list: [] });
+
+    await handleListTradfiInstruments(client, type);
+
+    const calls = (client.publicGet as jest.Mock).mock.calls;
+    expect(calls).toHaveLength(1);
+    expect(calls[0][1]).toEqual(expect.objectContaining({ category: "linear", symbolType }));
+  });
+
+  it("surfaces fullName, marketRegion, underlyingTicker, tags and PendingOpen status from linear entries", async () => {
+    const client = new MockClient("k", "s", "u");
+    const linearRaw = {
+      ...makeRawInstrument({ symbol: "AAPLUSDT", baseCoin: "AAPL", status: "PendingOpen", maxLeverage: "10" }),
+      fullName: "Apple",
+      marketRegion: "US",
+      underlyingTicker: "AAPL",
+      symbolType: "stock",
+      tags: ["ST"],
+    };
+    (client.publicGet as jest.Mock)
+      .mockResolvedValue({ list: [] })
+      .mockResolvedValueOnce({ list: [makeRawInstrument({ symbol: "AAPLXUSDT" })] })
+      .mockResolvedValueOnce({ list: [linearRaw] });
+
+    const result = await handleListTradfiInstruments(client);
+
+    expect(result.stock_perps[0]).toEqual(expect.objectContaining({
+      status: "PendingOpen",
+      fullName: "Apple",
+      marketRegion: "US",
+      underlyingTicker: "AAPL",
+      tags: ["ST"],
+    }));
+    const xstock = result.xstocks[0];
+    expect("fullName" in xstock).toBe(false);
+    expect("marketRegion" in xstock).toBe(false);
+    expect("underlyingTicker" in xstock).toBe(false);
+    expect("tags" in xstock).toBe(false);
   });
 });

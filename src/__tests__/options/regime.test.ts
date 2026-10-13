@@ -121,7 +121,8 @@ describe("handleGetOptionsRegime", () => {
     const calls = (client.publicGet as jest.Mock).mock.calls;
     const baseCoinCalls = calls.filter(([, p]: [string, Record<string, string>]) => p.baseCoin);
     const coins = baseCoinCalls.map(([, p]: [string, Record<string, string>]) => p.baseCoin);
-    for (const u of ["BTC", "ETH", "SOL", "XAUT", "XRP", "MNT", "DOGE"]) {
+    expect(new Set(coins).size).toBe(16);
+    for (const u of ["BTC", "HYPE", "DOGE", "TSLA", "NVDA", "SOXL"]) {
       expect(coins).toContain(u);
     }
   });

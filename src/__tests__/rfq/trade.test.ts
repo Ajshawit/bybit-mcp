@@ -220,6 +220,23 @@ describe("handleCreateRfq", () => {
     expect(res.risk?.modeled).toBe(false);
   });
 
+  it("passes isHedge through on hedge legs only, and keeps a hedged combo risk-gated", async () => {
+    const res = await handleCreateRfq(newClient(), {
+      counterparties: ["DESK"],
+      list: [
+        { category: "linear", symbol: "BTCUSDT", side: "buy", qty: "0.1", isHedge: true },
+        optionLeg,
+      ],
+    });
+    if (!("dryRun" in res) || res.dryRun !== true) throw new Error("expected dry run");
+    const list = res.request.list as Array<Record<string, unknown>>;
+    expect(list[0].isHedge).toBe(true);
+    expect("isHedge" in list[1]).toBe(false);
+    // A hedge perp leg is an ordinary linear leg to the gate: unmodeled => blocked.
+    expect(res.risk?.modeled).toBe(false);
+    expect(res.wouldSubmit).toBe(false);
+  });
+
   it("submits live when writes enabled, eligible, and risk allowed", async () => {
     process.env.RFQ_ENABLE_WRITES = "true";
     process.env.RFQ_ALLOW_UNCOVERED = "true";

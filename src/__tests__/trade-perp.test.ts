@@ -247,6 +247,27 @@ describe("handlePlacePerp", () => {
     expect(result.warnings.some((w: string) => /Notional too low/.test(w))).toBe(true);
   });
 
+  it("rejects a live order below lotSizeFilter.minNotionalValue from real instruments-info", async () => {
+    const actual = jest.requireActual<typeof import("../tools/trade-shared")>("../tools/trade-shared");
+    const { instrumentsCache } = jest.requireActual<typeof import("../cache")>("../cache");
+    instrumentsCache["store"].clear();
+    mockEnsure.mockImplementation(actual.ensureInstrumentInfo);
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockImplementation(async (path: string) => path === "/v5/market/instruments-info"
+      ? { list: [{
+          symbol: "ETHUSDT",
+          priceFilter: { tickSize: "0.01" },
+          lotSizeFilter: { qtyStep: "0.001", minOrderQty: "0.001", minNotionalValue: "5" },
+        }] }
+      : { list: [{ lastPrice: "1000", turnover24h: "200000000" }] });
+    (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
+
+    // qty = 0.4 * 10 / 1000 = 0.004 → notional 4 < 5
+    await expect(handlePlacePerp(client, { symbol: "ETHUSDT", side: "Buy", margin: 0.4, leverage: 10, sl: 950, confirm: "CONFIRM" }))
+      .rejects.toThrow(/Notional too low: 4\.00 USD, minimum is 5 USD/);
+    expect(client.signedPost).not.toHaveBeenCalled();
+  });
+
   it("populates avgFillPrice from fetched fill snapshot, not the request reference price", async () => {
     mockFetchFill.mockResolvedValue({ avgFillPrice: 30450.5, fillStatus: "Filled", cumExecQty: "0.01" });
     const client = new MockClient("k", "s", "u");
@@ -291,6 +312,24 @@ describe("handlePlacePerp", () => {
     const result = await handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 10, leverage: 5, sl: 29000, trailingStop: 500, confirm: "CONFIRM" });
 
     expect((result as any).partialSuccess).toBe(true);
+  });
+
+  it("sends a documented trading-stop body (tpslMode Full, no side) for trailing stop", async () => {
+    const client = new MockClient("k", "s", "u");
+    (client.publicGet as jest.Mock).mockResolvedValue(mockTicker);
+    (client.signedGet as jest.Mock).mockResolvedValue(mockWalletUsdt);
+    (client.signedPost as jest.Mock)
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce(mockOrderResult)
+      .mockResolvedValueOnce({});
+
+    await handlePlacePerp(client, { symbol: "BTCUSDT", side: "Buy", margin: 10, leverage: 5, sl: 29000, trailingStop: 500, trailingActivatePrice: 31000, confirm: "CONFIRM" });
+
+    const call = (client.signedPost as jest.Mock).mock.calls.find((c) => c[0] === "/v5/position/trading-stop");
+    expect(call[1]).toEqual({
+      category: "linear", symbol: "BTCUSDT", tpslMode: "Full", positionIdx: 1,
+      trailingStop: "500", activePrice: "31000",
+    });
   });
 });
 
@@ -637,9 +676,10 @@ describe("handleManagePosition", () => {
 
     const call = (client.signedPost as jest.Mock).mock.calls[0];
     expect(call[0]).toBe("/v5/position/trading-stop");
-    expect(call[1].stopLoss).toBe("29500");
-    expect(call[1].takeProfit).toBe("33000");
-    expect(call[1].category).toBe("linear");
+    expect(call[1]).toEqual({
+      category: "linear", symbol: "BTCUSDT", tpslMode: "Full", positionIdx: 1,
+      stopLoss: "29500", takeProfit: "33000",
+    });
   });
 
   it("passes '0' string to cancel existing SL", async () => {
@@ -749,7 +789,10 @@ describe("manage_position dry_run", () => {
     });
 
     expect((result as { dryRun?: boolean }).dryRun).toBe(true);
-    expect((result as { requestBody: { stopLoss?: string } }).requestBody.stopLoss).toBe("29000");
+    expect((result as { requestBody: Record<string, unknown> }).requestBody).toEqual({
+      category: "linear", symbol: "BTCUSDT", tpslMode: "Full", positionIdx: 1,
+      stopLoss: "29000", takeProfit: "33000",
+    });
     expect(client.signedPost).not.toHaveBeenCalled();
   });
 });

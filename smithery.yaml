@@ -70,6 +70,18 @@ startCommand:
           Allow combos the risk engine cannot prove are risk-defined (uncovered
           net-short or unmodelable legs). Leave false unless you have explicit reason.
         default: false
+      bybitMcpDataDir:
+        type: string
+        title: Analytics Data Directory
+        description: >
+          Directory for persisted analytics samples (IV percentile warmup survives restarts).
+        default: ~/.bybit-mcp
+      bybitMcpPersist:
+        type: boolean
+        title: Persist Analytics Samples
+        description: >
+          Write rolling analytics samples to disk. Set false to keep them in memory only.
+        default: true
   commandFunction: |-
     (config) => ({
       command: 'npx',
@@ -83,6 +95,8 @@ startCommand:
         ENABLE_RFQ: String(config.enableRfq ?? false),
         RFQ_ENABLE_WRITES: String(config.rfqEnableWrites ?? false),
         RFQ_ALLOW_UNCOVERED: String(config.rfqAllowUncovered ?? false),
+        BYBIT_MCP_DATA_DIR: config.bybitMcpDataDir ?? '~/.bybit-mcp',
+        BYBIT_MCP_PERSIST: String(config.bybitMcpPersist ?? true),
         ...(config.optionsMaxPremiumPctBalance !== undefined && {
           OPTIONS_MAX_PREMIUM_PCT_BALANCE: String(config.optionsMaxPremiumPctBalance)
         })

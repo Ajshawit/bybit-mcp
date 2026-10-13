@@ -5,7 +5,7 @@
 [![npm version](https://img.shields.io/npm/v/ajs-bybit-mcp.svg?color=blue)](https://www.npmjs.com/package/ajs-bybit-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/ajs-bybit-mcp.svg)](https://www.npmjs.com/package/ajs-bybit-mcp)
 [![smithery badge](https://smithery.ai/badge/ajs-bybit-mcp)](https://smithery.ai/server/ajs-bybit-mcp)
-[![tests](https://img.shields.io/badge/tests-585%20passing-brightgreen)](./src)
+[![tests](https://img.shields.io/badge/tests-621%20passing-brightgreen)](./src)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -25,12 +25,12 @@ There are several Bybit MCPs. Most are thin V5 REST wrappers with one tool per e
 | **Market analytics** | Regime detection (risk_on / risk_off / choppy), OI divergence scan, crowded positioning scan, volume spike scan | Individual endpoint queries |
 | **Quant analytics** | Portfolio Greeks aggregation + spot×IV scenario stress grid, realized-vol estimators + vol cone + IV−RV spread, basis & funding-carry analytics with predicted funding, pre-trade slippage/fee estimates from 500-level books, event calendar (funding/expiries/deliveries) | Not supported |
 | **Account view** | Single `get_account_status` call: balance, margin in use, unrealised PnL, and all positions across perps, spot, options | Multiple calls for wallet, positions, orders |
-| **Consolidated market data** | `get_market_data` returns price, funding, OI, and top-20 orderbook in one call (klines opt-in via `includeKlines`) | One endpoint per data type |
+| **Consolidated market data** | `get_market_data` returns price, funding, OI, and an orderbook summary in one call (full 20-level depth via `includeOrderbook`, klines via `includeKlines`) | One endpoint per data type |
 | **Post-trade review** | `get_closed_trades` returns realised PnL, fees-net PnL, hold duration, leverage used | None |
 | **Execution safety** | Schema-validated `confirm: "CONFIRM"` required on every execution tool + `dry_run` preview on every order | None beyond testnet default |
 | **Options safety** | Naked short blocked by default, partial-short detection, premium % of balance guard | N/A |
 | **Token efficiency** | Compact responses by default: orderbook 5-field summary instead of 20-level arrays, summary-only OHLC (candles opt-in), compact option chains, significant-figure numerics, klines off unless requested | Full arrays, raw floats |
-| **Test coverage** | 585 tests across 35 suites | Usually unstated |
+| **Test coverage** | 621 tests across 35 suites | Usually unstated |
 | **Scope** | Trading decisions | Bybit V5 CRUD |
 
 If you want "what's the price of BTC" and a place-order endpoint, the other Bybit MCPs will do fine. If you want a toolkit for real trading workflow — regime views, positioning scans, options flow, TradFi, safe execution, post-trade journaling — use this one.
@@ -69,7 +69,7 @@ Bybit V5 API for AI agents, with confirmation-based safety rails. Exposes Bybit'
 | Tool | Description |
 |------|-------------|
 | `get_portfolio_risk` | Portfolio-level risk in one call: net delta (USD) per underlying across linear perps, inverse perps, and options; aggregated gamma / vega / theta; gross notional, leverage ratio, concentration. Then a **scenario stress grid** — spot shocks (default ±5/10/20%) × IV shocks (default ±10 pts) with options repriced via Black-Scholes — including the worst-case cell. Answers "what does a −20% gap do to the account?" |
-| `get_volatility` | Realized-volatility toolkit for any symbol: three annualized estimators (close-to-close, Parkinson, Yang-Zhang) over a recent window, plus a **vol cone** (current RV vs its own min/p25/median/p75/max across 1d–30d horizons). With options enabled on BTC/ETH/SOL/XAUT/XRP/MNT/DOGE it adds ATM IV from the matching expiry and the **IV−RV spread** — the variance-risk-premium signal for vol buy/sell decisions. |
+| `get_volatility` | Realized-volatility toolkit for any symbol: three annualized estimators (close-to-close, Parkinson, Yang-Zhang) over a recent window, plus a **vol cone** (current RV vs its own min/p25/median/p75/max across 1d–30d horizons). With options enabled on any of the 16 option underlyings it adds ATM IV from the matching expiry and the **IV−RV spread** — the variance-risk-premium signal for vol buy/sell decisions. |
 | `get_carry_analytics` | Basis & funding carry. `action=basis`: mark-vs-index basis, current + realized funding annualized, **predicted next funding** from the premium index (Bybit's formula), perp-vs-spot basis, dated-futures annualized basis. `action=scan`: every liquid perp ranked by annualized carry — who pays shorts, who pays longs — using each symbol's real funding interval. |
 | `estimate_execution_cost` | Pre-trade cost from deep books (500 levels perps / 200 spot): expected average fill, slippage vs mid (bps), book imbalance, your account's actual taker/maker fees, **all-in cost** (slippage + fees), and the max size executable within a slippage budget. Warns when an order would sweep the whole visible book. |
 | `get_event_calendar` | Upcoming events: next funding time + rate per symbol (defaults to your open positions), option expiry schedule with OI notional by date, dated-futures deliveries, and NYSE session status for TradFi symbols. |
@@ -88,7 +88,7 @@ Bybit V5 API for AI agents, with confirmation-based safety rails. Exposes Bybit'
 
 | Tool | Description |
 |------|-------------|
-| `list_open_orders` | List all resting (unfilled) orders with entry price, size, SL, TP, trailing stop, activation price, fill status, and `orderId`. Optional `symbol` filter; `category` covers linear/inverse/spot/spot_margin/option. |
+| `list_open_orders` | List all resting (unfilled) orders with entry price, size, SL, TP, trailing stop, activation price, fill status, and `orderId`. Optional `symbol` filter; `category` covers linear/inverse/spot/option (spot_margin orders live in the spot book — use `spot`). |
 | `cancel_order` | Cancel one resting order by `orderId` (look it up via `list_open_orders`). Non-destructive to other orders. |
 | `get_closed_trades` | Realised P&L for recently closed perp positions (linear or inverse): avg entry/exit, `closedPnl`, fees-net P&L, leverage used, hold duration (seconds), and `pnlPct`. For post-trade journaling without reconstructing from account deltas. Bybit retains ~7 days; narrow with `startTime`/`endTime` (ms epoch). |
 | `get_performance_stats` | Closed-trade performance analytics over up to 180 days (chunks Bybit's 7-day closed-PnL windows automatically, cap 1000 trades): win rate, profit factor, expectancy, payoff ratio, largest win/loss, **annualized Sharpe & Sortino** on daily USD PnL (scale-dependent — not comparable to return-based ratios), **max drawdown** on the cumulative PnL curve, per-symbol attribution, long-vs-short breakdown, and hold-time stats. The stats source for `calculate_position_size` `method=kelly`. |
@@ -97,19 +97,19 @@ Bybit V5 API for AI agents, with confirmation-based safety rails. Exposes Bybit'
 
 | Tool | Description |
 |------|-------------|
-| `list_tradfi_instruments` | Discover Bybit's TradFi instruments: **xStocks** (tokenized equities, e.g. `TSLAXUSDT` — trade with `category=spot`), **stock perpetuals** (e.g. `TSLAPUSDT` — `category=linear`), and **commodity perpetuals** (e.g. `XAUUSDT` gold, `XAGUSDT` silver, `CLUSDT` crude — `category=linear`). Filter by `type` (`xstocks` / `stock_perps` / `commodity_perps` / `all`) and `search` substring. Returns `tickSize`, `minOrderQty`, `maxLeverage`. Call this before the first TradFi trade in a session to confirm exact symbols. |
+| `list_tradfi_instruments` | Discover Bybit's TradFi instruments: **xStocks** (tokenized equities, e.g. `TSLAXUSDT` — trade with `category=spot`), **stock perpetuals** (e.g. `TSLAPUSDT` — `category=linear`), **commodity perpetuals** (e.g. `XAUUSDT` gold, `XAGUSDT` silver, `CLUSDT` crude — `category=linear`), and **ETF / forex perpetuals** (e.g. `ARKKUSDT`, `EURUSDUSDT` — `category=linear`). Filter by `type` (`xstocks` / `stock_perps` / `commodity_perps` / `etf_perps` / `forex_perps` / `all`) and `search` substring. Returns `status` (`PendingOpen` = not yet tradable), `tickSize`, `minOrderQty`, `maxLeverage`, plus `fullName` / `marketRegion` / `underlyingTicker` / `tags` on perps. Call this before the first TradFi trade in a session to confirm exact symbols. |
 
 > **TradFi data caveat:** Bybit's stock/commodity perps and xStocks trade around the clock, but the underlying equity only moves during NYSE hours (09:30–16:00 ET, Mon–Fri). Use `get_market_data` with `category=spot` on an xStock symbol for real-time NYSE session status. Volume, funding, and OI for **all** TradFi instruments reflect Bybit's market only — not real NYSE/CME flow.
 
 ### Options (requires `ENABLE_OPTIONS=true`)
 
-Underlyings: **BTC, ETH, SOL, XAUT (Tether Gold), XRP, MNT, DOGE** — all USDT-settled and USDT-quoted. `quote` and `place_option_trade` accept any full Bybit option symbol (e.g. `XAUT-31JUL26-3950-P-USDT`), so every listed contract is reachable.
+Underlyings (16): crypto **BTC, ETH, SOL, XAUT (Tether Gold), HYPE, XRP, MNT, DOGE** (expire 08:00 UTC) and stock options **SPCX, NVDA, SNDK, QQQ, SKHY, MU, TSLA, SOXL** (expire 20:00 UTC) — all USDT-settled and USDT-quoted. Reference price comes from the `${u}USDT` linear perp (stocks have no spot pair). `quote` and `place_option_trade` accept any full Bybit option symbol (e.g. `XAUT-31JUL26-3950-P-USDT`), so every listed contract is reachable.
 
 | Tool | Description |
 |------|-------------|
-| `options_market` | Consolidated options data for BTC, ETH, SOL, XAUT, XRP, MNT, DOGE. Select mode via `action`: **`chain`** (browse contracts, filterable by expiry/type/OI/strike range; compact default groups by expiry with `[strike, C|P, bid, ask, iv, openInterest]` tuples and keeps the top-OI `limit` contracts (default 50) — pass `compact:false` for full per-contract objects incl. moneyness/mark/lastPrice/volume24h), **`quote`** (full pricing + Greeks for one symbol, opt-in local Black-Scholes verification via `computeGreeksLocal:true`), **`scan`** (IV anomalies — `high_iv`/`low_iv` need ~24h warmup — plus `skew`, `high_oi_change`), **`regime`** (ATM IV, IV percentile, put/call skew, term structure per underlying). |
+| `options_market` | Consolidated options data for all 16 underlyings (8 crypto + 8 stock options). Select mode via `action`: **`chain`** (browse contracts, filterable by expiry/type/OI/strike range; compact default groups by expiry with `[strike, C|P, bid, ask, iv, openInterest]` tuples and keeps the top-OI `limit` contracts (default 50) — pass `compact:false` for full per-contract objects incl. moneyness/mark/lastPrice/volume24h), **`quote`** (full pricing + Greeks for one symbol, opt-in local Black-Scholes verification via `computeGreeksLocal:true`), **`scan`** (IV anomalies — `high_iv`/`low_iv` need ~24h warmup — plus `skew`, `high_oi_change`), **`regime`** (ATM IV, IV percentile, put/call skew, term structure per underlying). |
 | `get_option_payoff` | Compute expiry payoff for one or more legs — PnL at each price point, max loss, max profit, breakeven(s). Pure math, no API call. Use before placing to verify risk/reward. |
-| `place_option_trade` | Place a single-leg option order (BTC, ETH, SOL, XAUT, XRP, MNT, DOGE) with `dry_run` support and naked-short guards. |
+| `place_option_trade` | Place a single-leg option order (any of the 16 crypto/stock underlyings) with `dry_run` support and naked-short guards. |
 | `close_option_position` | Close an open option position fully or partially, with `dry_run` P&L preview. |
 
 All option symbols this server trades are **USDT-settled** (`-USDT` suffix) — premium is charged in USDT. Ensure USDT balance before placing option trades.
@@ -268,7 +268,7 @@ npm run dev         # auto-rebuild on file changes (TypeScript watch)
 npm run build       # compile to dist/
 ```
 
-Tests: 585 passing across 35 suites.
+Tests: 621 passing across 35 suites.
 
 ---
 

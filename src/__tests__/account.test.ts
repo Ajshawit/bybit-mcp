@@ -154,13 +154,62 @@ describe("handleGetAccountStatus", () => {
       .mockResolvedValueOnce(mockWalletBalance)    // wallet balance
       .mockResolvedValueOnce(emptyPositions)         // linear positions
       .mockResolvedValueOnce(emptyPositions)         // inverse positions
-      .mockResolvedValueOnce({ uid: "12345678", accountType: "UNIFIED" }); // query-api (options slot uses Promise.resolve, no signedGet call)
+      .mockResolvedValueOnce({ userID: 12345678, uta: 1, readOnly: 0 }); // query-api (options slot uses Promise.resolve, no signedGet call)
 
     const result = await handleGetAccountStatus(client);
 
-    expect(result.accountInfo).toBeDefined();
-    expect(result.accountInfo!.uid).toBe("12345678");
-    expect(result.accountInfo!.accountType).toBe("UNIFIED");
+    expect(result.accountInfo).toEqual({ uid: "12345678", accountType: "UNIFIED", readOnlyKey: false });
+  });
+
+  // Live /v5/user/query-api returns userID (number) and uta (1 = UTA, 0 = classic), not uid/accountType.
+  it("maps live query-api userID/uta to accountInfo", async () => {
+    const client = new MockClient("key", "secret", "url");
+    (client.signedGet as jest.Mock)
+      .mockResolvedValueOnce(mockWalletBalance)
+      .mockResolvedValueOnce(emptyPositions)
+      .mockResolvedValueOnce(emptyPositions)
+      .mockResolvedValueOnce({ userID: 547426798, uta: 1 });
+
+    const result = await handleGetAccountStatus(client);
+
+    expect(result.accountInfo).toEqual({ uid: "547426798", accountType: "UNIFIED" });
+  });
+
+  it("reports CLASSIC accountType and a read-only key when uta is 0 and readOnly is 1", async () => {
+    const client = new MockClient("key", "secret", "url");
+    (client.signedGet as jest.Mock)
+      .mockResolvedValueOnce(mockWalletBalance)
+      .mockResolvedValueOnce(emptyPositions)
+      .mockResolvedValueOnce(emptyPositions)
+      .mockResolvedValueOnce({ userID: 547426798, uta: 0, readOnly: 1 });
+
+    const result = await handleGetAccountStatus(client);
+
+    expect(result.accountInfo).toEqual({ uid: "547426798", accountType: "CLASSIC", readOnlyKey: true });
+  });
+
+  // Portfolio-margin accounts return "" for per-coin IM fields; parseFloat("") is NaN.
+  it("keeps freeCapital finite when per-coin IM fields are empty strings (portfolio margin)", async () => {
+    const pmWallet = {
+      list: [{
+        ...mockWalletBalance.list[0],
+        coin: [
+          { coin: "USDT", walletBalance: "200.00", totalPositionIM: "", totalOrderIM: "", unrealisedPnl: "", equity: "200.00", locked: "0" },
+        ],
+      }],
+    };
+    const client = new MockClient("key", "secret", "url");
+    (client.signedGet as jest.Mock)
+      .mockResolvedValueOnce(pmWallet)
+      .mockResolvedValueOnce(emptyPositions)
+      .mockResolvedValueOnce(emptyPositions);
+
+    const result = await handleGetAccountStatus(client);
+
+    expect(result.freeCapital).toBe(200);
+    expect(result.marginInUse).toBe(0);
+    expect(result.marginReservedForOrders).toBe(0);
+    expect(result.unrealisedPnl).toBe(0);
   });
 
   it("omits accountInfo when query-api resolves to an empty object", async () => {
@@ -169,7 +218,7 @@ describe("handleGetAccountStatus", () => {
       .mockResolvedValueOnce(mockWalletBalance)
       .mockResolvedValueOnce(emptyPositions)
       .mockResolvedValueOnce(emptyPositions)
-      .mockResolvedValueOnce({}); // query-api succeeded but returned no uid/accountType
+      .mockResolvedValueOnce({}); // query-api succeeded but returned no userID
 
     const result = await handleGetAccountStatus(client);
 
@@ -233,7 +282,7 @@ describe("handleGetAccountStatus", () => {
       .mockResolvedValueOnce(mockLinearPositions)
       .mockResolvedValueOnce(emptyPositions)
       .mockResolvedValueOnce(optionPositions)
-      .mockResolvedValueOnce({ uid: "12345678", accountType: "UNIFIED" });
+      .mockResolvedValueOnce({ userID: 12345678, uta: 1, readOnly: 0 });
 
     const result = await handleGetAccountStatus(client, true);
 

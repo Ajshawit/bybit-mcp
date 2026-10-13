@@ -410,13 +410,13 @@ function createServer(
       },
       {
         name: "list_tradfi_instruments",
-        description: "Discover Bybit TradFi instruments and constraints (tickSize, minOrderQty, maxLeverage): xStocks (tokenized equities e.g. TSLAXUSDT, category=spot), stock perps (e.g. TSLAPUSDT) and commodity perps (e.g. XAUUSDT), category=linear. Call before the first TradFi trade in a session. These markets trade 24/7 but underlying equities move only during NYSE hours; volume/funding/OI are Bybit-market-only positioning indicators, not real NYSE/CME flows.",
+        description: "Discover Bybit TradFi instruments and constraints (tickSize, minOrderQty, maxLeverage): xStocks (tokenized equities e.g. TSLAXUSDT, category=spot), stock perps (e.g. TSLAPUSDT), commodity perps (e.g. XAUUSDT), ETF perps (e.g. ARKKUSDT) and forex perps (e.g. EURUSDUSDT), category=linear. Perps also carry fullName/marketRegion/underlyingTicker/tags; status PendingOpen means orders are rejected until Trading. Call before the first TradFi trade in a session. These markets trade 24/7 but underlying equities move only during NYSE hours; volume/funding/OI are Bybit-market-only positioning indicators, not real NYSE/CME flows.",
         inputSchema: {
           type: "object" as const,
           properties: {
             type: {
               type: "string",
-              enum: ["xstocks", "stock_perps", "commodity_perps", "all"],
+              enum: ["xstocks", "stock_perps", "commodity_perps", "etf_perps", "forex_perps", "all"],
               description: "Which TradFi asset type to list. Default: all",
             },
             search: {
@@ -429,7 +429,7 @@ function createServer(
       ...(ENABLE_OPTIONS ? [
         {
           name: "options_market",
-          description: "Options market data for BTC/ETH/SOL/XAUT/XRP/MNT/DOGE — four actions. 'chain': browse an underlying's contracts. 'quote': full pricing + Greeks for one symbol (e.g. BTC-25APR26-80000-C-USDT). 'scan': unusual-IV scan (high_iv/low_iv require ~24h warmup). 'regime': ATM IV, IV percentile, put/call skew, term structure per underlying.",
+          description: "Options market data for 16 underlyings (crypto BTC/ETH/SOL/XAUT/HYPE/XRP/MNT/DOGE; stock SPCX/NVDA/SNDK/QQQ/SKHY/MU/TSLA/SOXL) — four actions. 'chain': browse an underlying's contracts. 'quote': full pricing + Greeks for one symbol (e.g. BTC-25APR26-80000-C-USDT). 'scan': unusual-IV scan (high_iv/low_iv require ~24h warmup). 'regime': ATM IV, IV percentile, put/call skew, term structure per underlying.",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -491,7 +491,7 @@ function createServer(
         },
         {
           name: "place_option_trade",
-          description: "Place a single-leg option order on Bybit (BTC, ETH, SOL, XAUT, XRP, MNT, DOGE). CONFIRMATION REQUIRED: (1) Present the full trade plan — symbol, side, qty, orderType, estimated premium, Greeks, payoff summary. (2) Wait for the user to reply with 'CONFIRM'. (3) Only call this tool after receiving explicit CONFIRM. Recommended workflow: present plan → CONFIRM → call with dry_run=true → verify estimatedPremium and warnings → call again with dry_run=false. Short selling requires OPTIONS_ALLOW_NAKED_SHORT=true unless an offsetting long exists.",
+          description: "Place a single-leg option order on Bybit (any listed crypto or stock option underlying, e.g. BTC, ETH, TSLA, NVDA). CONFIRMATION REQUIRED: (1) Present the full trade plan — symbol, side, qty, orderType, estimated premium, Greeks, payoff summary. (2) Wait for the user to reply with 'CONFIRM'. (3) Only call this tool after receiving explicit CONFIRM. Recommended workflow: present plan → CONFIRM → call with dry_run=true → verify estimatedPremium and warnings → call again with dry_run=false. Short selling requires OPTIONS_ALLOW_NAKED_SHORT=true unless an offsetting long exists.",
           inputSchema: {
             type: "object" as const,
             properties: {
@@ -598,6 +598,7 @@ function createServer(
                     side: { type: "string", enum: ["buy", "sell"] },
                     qty: { type: "string", description: "Quantity as a string (Bybit wire format)" },
                     isLeverage: { type: "boolean" },
+                    isHedge: { type: "boolean", description: "Marks a perp leg that delta-hedges the option legs" },
                   },
                   required: ["category", "symbol", "side", "qty"],
                 },
@@ -991,7 +992,7 @@ function createServer(
         case "list_tradfi_instruments": {
           const data = await handleListTradfiInstruments(
             client,
-            (a.type as "xstocks" | "stock_perps" | "commodity_perps" | "all" | undefined) ?? "all",
+            (a.type as "xstocks" | "stock_perps" | "commodity_perps" | "etf_perps" | "forex_perps" | "all" | undefined) ?? "all",
             a.search as string | undefined
           );
           result = { ...data, serverTimestamp: new Date().toISOString() };

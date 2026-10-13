@@ -1,4 +1,4 @@
-import { IVSampleStore, handleScanOptions } from "../../tools/options/scan";
+import { IVSampleStore, expiryBucket, handleScanOptions } from "../../tools/options/scan";
 import { BybitClient } from "../../client";
 
 jest.mock("../../client");
@@ -117,5 +117,20 @@ describe("handleScanOptions", () => {
     expect(result.underlying).toBe("ETH");
     expect(result.filter).toBe("low_iv");
     expect(Array.isArray(result.contracts)).toBe(true);
+  });
+});
+
+describe("expiryBucket", () => {
+  it("strips a single-digit day (Bybit does not zero-pad)", () => {
+    expect(expiryBucket("BTC-6NOV26-110000-P-USDT")).toBe("NOV26");
+  });
+
+  it("strips a two-digit day", () => {
+    expect(expiryBucket("BTC-25APR26-80000-C-USDT")).toBe("APR26");
+  });
+
+  it("returns unknown for malformed symbols", () => {
+    expect(expiryBucket("BTCUSDT")).toBe("unknown");
+    expect(expiryBucket("BTC-GARBAGE-1-C")).toBe("unknown");
   });
 });

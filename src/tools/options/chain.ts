@@ -99,7 +99,7 @@ export async function handleGetOptionChain(
       baseCoin: underlying,
     }),
     client.publicGet<TickersResult>("/v5/market/tickers", {
-      category: "spot",
+      category: "linear",
       symbol: `${underlying}USDT`,
     }),
   ]);

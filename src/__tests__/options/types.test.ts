@@ -16,8 +16,15 @@ describe("OPTION_MULTIPLIERS", () => {
 });
 
 describe("OPTION_UNDERLYINGS", () => {
-  it("lists every Bybit option underlying (crypto + XAUT/XRP/MNT/DOGE)", () => {
-    expect([...OPTION_UNDERLYINGS]).toEqual(["BTC", "ETH", "SOL", "XAUT", "XRP", "MNT", "DOGE"]);
+  it("lists every Bybit option underlying (crypto, then stock)", () => {
+    expect([...OPTION_UNDERLYINGS]).toEqual([
+      "BTC", "ETH", "SOL", "XAUT", "HYPE", "XRP", "MNT", "DOGE",
+      "SPCX", "NVDA", "SNDK", "QQQ", "SKHY", "MU", "TSLA", "SOXL",
+    ]);
+  });
+
+  it("has a multiplier for every underlying", () => {
+    for (const u of OPTION_UNDERLYINGS) expect(OPTION_MULTIPLIERS[u]).toBe(1);
   });
 });
 
@@ -40,6 +47,17 @@ describe("parseOptionSymbol", () => {
     expect(result.type).toBe("put");
     expect(result.expiry.getUTCMonth()).toBe(4); // May = 4
     expect(result.expiry.getUTCDate()).toBe(30);
+  });
+
+  it("stock options expire at 20:00 UTC and keep fractional strikes", () => {
+    const result = parseOptionSymbol("TSLA-30OCT26-402.5-P-USDT");
+    expect(result.strike).toBe(402.5);
+    expect(result.expiry.toISOString()).toBe("2026-10-30T20:00:00.000Z");
+  });
+
+  it("crypto options expire at 08:00 UTC", () => {
+    expect(parseOptionSymbol("BTC-6NOV26-110000-P-USDT").expiry.toISOString()).toBe("2026-11-06T08:00:00.000Z");
+    expect(parseOptionSymbol("HYPE-13OCT26-83-C-USDT").expiry.toISOString()).toBe("2026-10-13T08:00:00.000Z");
   });
 
   it("parses fractional strikes for sub-dollar underlyings", () => {

@@ -48,8 +48,7 @@ function mockApi(client: BybitClient, opts: MockApiOptions = {}): void {
         list: [{
           symbol: params.symbol,
           priceFilter: { tickSize: "0.1" },
-          lotSizeFilter: { qtyStep, minOrderQty: qtyStep },
-          minNotionalValue: "5",
+          lotSizeFilter: { qtyStep, minOrderQty: qtyStep, minNotionalValue: "5" },
         }],
       };
     }

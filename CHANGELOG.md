@@ -4,6 +4,35 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] — 2026-10-13
+
+Audit-driven release: four live-path bugs found by checking every endpoint the server reads against live mainnet, plus options coverage expanded from 7 to 16 underlyings. 621 tests across 35 suites.
+
+### Added
+
+- **16 option underlyings, including stock options** — `OPTION_UNDERLYINGS` now matches Bybit's `/v5/market/option-base-coins`: HYPE joins the crypto set, and eight stock options are new (SPCX, NVDA, SNDK, QQQ, SKHY, MU, TSLA, SOXL). Stock options expire at 20:00 UTC (crypto at 08:00); `parseOptionSymbol` picks the hour from a new `STOCK_OPTION_UNDERLYINGS` set. Stock underlyings have no spot pair, so the `options_market` chain reference price now comes from the `${u}USDT` linear perp, as scan, regime and `get_volatility` already did. `OPTION_MULTIPLIERS` is derived from the same constant.
+- **`list_tradfi_instruments` ETF and forex perps** — `type` accepts `etf_perps` and `forex_perps` (56 ETF and 3 forex perps at release). Perp entries now carry Bybit's `fullName`, `marketRegion`, `underlyingTicker` and `tags`, and a `PendingOpen` status is surfaced (orders are rejected until it turns `Trading`).
+- **`create_rfq` per-leg `isHedge`** — a perp leg marked `isHedge:true` delta-hedges the option legs (Bybit changelog 2026-07-30). Emitted only when set. The combo risk gate is unchanged: a mixed option+perp combo is still unmodeled and fails closed unless `RFQ_ALLOW_UNCOVERED=true`.
+- **`get_account_status.accountInfo.readOnlyKey`** — reports whether the API key is read-only.
+- **CI and live API probe** — GitHub Actions runs build + jest on Node 20/22 for every push and PR, and a weekly job runs `scripts/live-probe.mjs`: 17 zero-dependency checks that every public endpoint and response field the server reads still exists, plus a warning when Bybit lists option base coins beyond the hardcoded 16.
+- **smithery `bybitMcpDataDir` / `bybitMcpPersist`** — persistence settings are now configurable from smithery, wired to `BYBIT_MCP_DATA_DIR` / `BYBIT_MCP_PERSIST`.
+
+### Changed
+
+- **MCP SDK floor raised to `^1.32.1`** — clears all 8 production-graph advisories (qs DoS and others); `npm audit --omit=dev` is now clean. The raised floor keeps lockfile-less installs from regressing.
+- **Docs drift** — README test counts, `get_market_data` and `list_open_orders` rows now match the code; CLAUDE.md notes the live probe and the 2026-10 audit.
+
+### Fixed
+
+- **Perp min-notional gate never fired** — Bybit returns `minNotionalValue` under `lotSizeFilter` (live BTCUSDT: `"5"`), but the code read a top-level field that does not exist and fell back to `0`. All three min-notional checks in `trade-perp.ts` passed everything, so live orders below Bybit's minimum went straight to the exchange to be rejected there. A new regression test runs the real `ensureInstrumentInfo` and proves a 4 USD order is refused against a 5 USD minimum.
+- **`trading-stop` requests now match the API** — `POST /v5/position/trading-stop` requires `tpslMode` and has no `side` parameter. Both callers (the trailing stop set after `place_trade`, and `manage_position`) now send `tpslMode:"Full"`, and the trailing-stop body no longer sends `side`.
+- **`get_account_status` `accountInfo` was always omitted** — `/v5/user/query-api` returns `userID` and `uta`, not `uid`/`accountType`, so the mapping never matched. It now returns `{uid, accountType: UNIFIED|CLASSIC, readOnlyKey}`. Separately, portfolio-margin accounts return `""` for per-coin `totalPositionIM`/`totalOrderIM`/`unrealisedPnl`, which turned `freeCapital` into NaN (serialized as `null`); those fields now default to 0.
+- **IV-percentile buckets for 1st–9th-of-month expiries** — Bybit does not zero-pad expiry days (`BTC-6NOV26`), and the bucket key sliced two characters, filing those samples under bogus keys like `OV26`. The day is now stripped with a regex, and malformed tokens bucket as `unknown`.
+
+### Audit notes
+
+Every endpoint and response field the server reads was verified against live mainnet and the Bybit V5 changelog for July–September 2026; no breaking changes were found on endpoints this server uses. Migrating to the high-level `McpServer` class and upgrading to jest 30 (which clears the remaining 34 dev-only audit findings) are deliberately deferred.
+
 ## [0.6.0] — 2026-07-03
 
 Options coverage expanded from 3 to 7 underlyings, plus a token-efficiency pass across responses and tool schemas. 604 tests across 35 suites.

@@ -247,6 +247,8 @@ export interface CreateRfqLeg {
   side: RfqSide;
   qty: string;
   isLeverage?: boolean;
+  // Perp leg used to delta-hedge the option legs (Bybit changelog 2026-07-30).
+  isHedge?: boolean;
 }
 
 export interface CreateRfqParams {
@@ -269,7 +271,7 @@ export interface CreateRfqResult {
   rfqLinkId: string;
   status: "Active" | "Canceled" | "Filled" | "Expired" | "Failed";
   expiresAt: string;
-  deskCode: string;
+  deskCode: string; // "" when the RFQ was created with anonymous: true
   serverTimestamp: string;
 }
 

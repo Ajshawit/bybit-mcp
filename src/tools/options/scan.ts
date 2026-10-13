@@ -64,8 +64,9 @@ export class IVSampleStore {
 export function expiryBucket(symbol: string): string {
   const parts = symbol.split("-");
   if (parts.length < 2) return "unknown";
-  const exp = parts[1]; // e.g. "25APR26"
-  return exp.slice(2); // "APR26"
+  // Bybit does not zero-pad the day: "25APR26" and "6NOV26" -> "APR26" / "NOV26"
+  const m = /^\d{1,2}([A-Z]{3}\d{2})$/.exec(parts[1]);
+  return m ? m[1] : "unknown";
 }
 
 export interface ScanOptionsResult {

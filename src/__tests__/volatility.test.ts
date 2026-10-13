@@ -200,7 +200,7 @@ describe("handleGetVolatility", () => {
     const client = new MockClient("k", "s", "u");
     (client.publicGet as jest.Mock).mockResolvedValueOnce({ list: klinesFromCloses(closes) });
 
-    // ADAUSDT is not an option underlying (BTC/ETH/SOL/XAUT/XRP/MNT/DOGE are),
+    // ADAUSDT is not an option underlying (see OPTION_UNDERLYINGS),
     // so handleGetVolatility must skip the option-chain + spot fetches.
     const result = await handleGetVolatility(client, true, { symbol: "ADAUSDT" });
 
