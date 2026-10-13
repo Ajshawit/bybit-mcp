@@ -8,22 +8,25 @@ User-facing docs live in README.md — keep this file for working-on-the-code co
 ```bash
 npm run build      # tsc + chmod +x dist/index.js (required: bin must be executable)
 npm run dev        # tsc --watch
-npm test           # jest (604 cases, 35 suites) — must stay green before publish
+npm test           # jest (621 cases, 35 suites) — must stay green before publish
 npm test -- trade  # run a single suite by path fragment
 npm start          # node dist/index.js (needs prior build)
 ```
+
+CI: `node scripts/live-probe.mjs` — zero-dep probe of every public Bybit endpoint/field the server reads; runs weekly in `.github/workflows/ci.yml`. If it warns about extra option base coins, extend `OPTION_UNDERLYINGS` in `src/tools/options/types.ts` AND the copy in the script.
 
 `prepublishOnly` runs build + test, so a failing test blocks `npm publish`.
 
 ## Architecture
 
 - `src/index.ts` — MCP server: tool registry, request routing, env bootstrap (large; ~entry point).
+- `src/index.ts` uses the SDK's low-level `Server` class, which SDK ≥1.29 marks deprecated in favour of `McpServer`; migration deferred (hand-written JSON schemas, 1100+ line switch).
 - `src/client.ts` / `src/auth.ts` — Bybit V5 signed REST client + HMAC auth.
 - `src/tools/*.ts` — always-on tools (account, market, orders, trade-spot, trade-perp) plus quant analytics (volatility, carry, execution, portfolio, calendar, sizing, performance, pairs — all read-only).
 - `src/storage.ts` — JSON-file persistence for rolling analytics samples (IV percentile warmup survives restarts). Fail-open to in-memory; debounced atomic writes; `BYBIT_MCP_DATA_DIR` / `BYBIT_MCP_PERSIST` envs.
 - `src/tools/options/*.ts` — options tools, gated behind `ENABLE_OPTIONS=true`.
 - `src/tools/rfq/*.ts` — RFQ block-trade tools (query/eligibility/risk/trade), gated behind `ENABLE_RFQ=true`; live writes additionally gated by `RFQ_ENABLE_WRITES`.
-- `src/__tests__/` mirrors `src/` 1:1 — every tool file has a matching test file.
+- `src/__tests__/` mirrors `src/` — every tool file has a matching test file (types/barrels/index.ts excepted).
 
 Tools are conditionally spread into the registry, e.g. `...(ENABLE_OPTIONS ? [...] : [])` /
 `...(ENABLE_RFQ ? [...] : [])` in `src/index.ts`. Options and RFQ cases also guard with an
@@ -36,6 +39,7 @@ defaults true and live submit requires `RFQ_ENABLE_WRITES=true` + eligibility + 
 - **No `console.log`** — stdout is the MCP transport; logging to it corrupts the protocol.
 - New tool = tool file + test file + registry wiring in `src/index.ts` + README table row + `.env.example` if it adds an env var.
 - Boolean env vars use strict `=== "true"` coercion; `BYBIT_TESTNET` uses inverse `!== "false"`.
+- Never run `git stash` in a shared working tree; parallel agents edit concurrently.
 
 ## Safety Rails (do not weaken without explicit instruction)
 
@@ -54,4 +58,4 @@ defaults true and live submit requires `RFQ_ENABLE_WRITES=true` + eligibility + 
 
 ## Roadmap
 
-Complete as of v0.5.0 — the second-tier quant features all shipped: `calculate_position_size` (sizing.ts), `get_performance_stats` (performance.ts), `analyze_pair` (pairs.ts), and `scan_market` crowding signals (`account_ratio` filter + funding z-scores in market.ts). No open roadmap items. Note: funding z-scores read Bybit's 200-record funding-history API directly rather than the persistence layer — the API already retains a longer window than persisted samples would accumulate.
+Complete as of v0.7.0 — the second-tier quant features all shipped: `calculate_position_size` (sizing.ts), `get_performance_stats` (performance.ts), `analyze_pair` (pairs.ts), and `scan_market` crowding signals (`account_ratio` filter + funding z-scores in market.ts). No open roadmap items. Note: funding z-scores read Bybit's 200-record funding-history API directly rather than the persistence layer — the API already retains a longer window than persisted samples would accumulate. 2026-10 audit: 4 field-path/spec bugs fixed, option universe 7→16 (incl. stock options expiring 20:00 UTC), TradFi ETF/forex perps, CI + live probe added.

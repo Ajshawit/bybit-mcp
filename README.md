@@ -5,7 +5,7 @@
 [![npm version](https://img.shields.io/npm/v/ajs-bybit-mcp.svg?color=blue)](https://www.npmjs.com/package/ajs-bybit-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/ajs-bybit-mcp.svg)](https://www.npmjs.com/package/ajs-bybit-mcp)
 [![smithery badge](https://smithery.ai/badge/ajs-bybit-mcp)](https://smithery.ai/server/ajs-bybit-mcp)
-[![tests](https://img.shields.io/badge/tests-585%20passing-brightgreen)](./src)
+[![tests](https://img.shields.io/badge/tests-621%20passing-brightgreen)](./src)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -25,12 +25,12 @@ There are several Bybit MCPs. Most are thin V5 REST wrappers with one tool per e
 | **Market analytics** | Regime detection (risk_on / risk_off / choppy), OI divergence scan, crowded positioning scan, volume spike scan | Individual endpoint queries |
 | **Quant analytics** | Portfolio Greeks aggregation + spot×IV scenario stress grid, realized-vol estimators + vol cone + IV−RV spread, basis & funding-carry analytics with predicted funding, pre-trade slippage/fee estimates from 500-level books, event calendar (funding/expiries/deliveries) | Not supported |
 | **Account view** | Single `get_account_status` call: balance, margin in use, unrealised PnL, and all positions across perps, spot, options | Multiple calls for wallet, positions, orders |
-| **Consolidated market data** | `get_market_data` returns price, funding, OI, and top-20 orderbook in one call (klines opt-in via `includeKlines`) | One endpoint per data type |
+| **Consolidated market data** | `get_market_data` returns price, funding, OI, and an orderbook summary in one call (full 20-level depth via `includeOrderbook`, klines via `includeKlines`) | One endpoint per data type |
 | **Post-trade review** | `get_closed_trades` returns realised PnL, fees-net PnL, hold duration, leverage used | None |
 | **Execution safety** | Schema-validated `confirm: "CONFIRM"` required on every execution tool + `dry_run` preview on every order | None beyond testnet default |
 | **Options safety** | Naked short blocked by default, partial-short detection, premium % of balance guard | N/A |
 | **Token efficiency** | Compact responses by default: orderbook 5-field summary instead of 20-level arrays, summary-only OHLC (candles opt-in), compact option chains, significant-figure numerics, klines off unless requested | Full arrays, raw floats |
-| **Test coverage** | 585 tests across 35 suites | Usually unstated |
+| **Test coverage** | 621 tests across 35 suites | Usually unstated |
 | **Scope** | Trading decisions | Bybit V5 CRUD |
 
 If you want "what's the price of BTC" and a place-order endpoint, the other Bybit MCPs will do fine. If you want a toolkit for real trading workflow — regime views, positioning scans, options flow, TradFi, safe execution, post-trade journaling — use this one.
@@ -88,7 +88,7 @@ Bybit V5 API for AI agents, with confirmation-based safety rails. Exposes Bybit'
 
 | Tool | Description |
 |------|-------------|
-| `list_open_orders` | List all resting (unfilled) orders with entry price, size, SL, TP, trailing stop, activation price, fill status, and `orderId`. Optional `symbol` filter; `category` covers linear/inverse/spot/spot_margin/option. |
+| `list_open_orders` | List all resting (unfilled) orders with entry price, size, SL, TP, trailing stop, activation price, fill status, and `orderId`. Optional `symbol` filter; `category` covers linear/inverse/spot/option (spot_margin orders live in the spot book — use `spot`). |
 | `cancel_order` | Cancel one resting order by `orderId` (look it up via `list_open_orders`). Non-destructive to other orders. |
 | `get_closed_trades` | Realised P&L for recently closed perp positions (linear or inverse): avg entry/exit, `closedPnl`, fees-net P&L, leverage used, hold duration (seconds), and `pnlPct`. For post-trade journaling without reconstructing from account deltas. Bybit retains ~7 days; narrow with `startTime`/`endTime` (ms epoch). |
 | `get_performance_stats` | Closed-trade performance analytics over up to 180 days (chunks Bybit's 7-day closed-PnL windows automatically, cap 1000 trades): win rate, profit factor, expectancy, payoff ratio, largest win/loss, **annualized Sharpe & Sortino** on daily USD PnL (scale-dependent — not comparable to return-based ratios), **max drawdown** on the cumulative PnL curve, per-symbol attribution, long-vs-short breakdown, and hold-time stats. The stats source for `calculate_position_size` `method=kelly`. |
@@ -268,7 +268,7 @@ npm run dev         # auto-rebuild on file changes (TypeScript watch)
 npm run build       # compile to dist/
 ```
 
-Tests: 585 passing across 35 suites.
+Tests: 621 passing across 35 suites.
 
 ---
 
